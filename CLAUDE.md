@@ -1,0 +1,355 @@
+# CLAUDE.md — Anharmonic Mode Analyzer (AMA)
+
+Browser-Tool, das Gaussian-Logdateien (`.log`/`.out`/`.txt`) parst und daraus
+Normalmoden-Analyse, IR-Spektren, VPT2-Anharmonizitäten, 2D-IR-Vorhersagen,
+Optimierungs-/Scan-Playback, Orbitale und Thermochemie darstellt.
+Autor: Timur Calis, AG Horch, FU Berlin. Ausführliche Fach-/Methodendoku:
+`AMA_manual.md` (separat, nicht im Repo — dort stehen alle Formeln).
+
+---
+
+## 1. Architektur
+
+**Eine einzige HTML-Datei, kein Build-Step, keine Netzwerkzugriffe zur Laufzeit.**
+
+`src/index.html` ist die vollständige Anwendung. Sie wird per Doppelklick von
+`file://`, vom USB-Stick oder von jedem Static-Host geöffnet. Es gibt keinen
+npm-, bundler- oder Transpiler-Schritt: die Datei *ist* das Artefakt.
+
+### Aufbau der Datei
+
+`src/index.html` hat exakt 400 Zeilen und vier Abschnitte:
+
+| Abschnitt | Zeile (aktuell) | Inhalt |
+|---|---|---|
+| Loader | 1–382 | Inline-Bootstrap: entpackt die Assets, mintet Blob-URLs, ersetzt die UUIDs im Template und tauscht das Dokument aus ("Unpacking…") |
+| `<script type="__bundler/manifest">` | 384 | JSON-Objekt `uuid → {mime, compressed, data}`; `data` = base64(gzip(Asset)) |
+| `<script type="__bundler/ext_resources">` | 388 | Mapping `CDN-URL → uuid`; sorgt dafür, dass React/ReactDOM aus dem Blob statt von unpkg kommen |
+| `<script type="__bundler/template">` | 396 | **Die eigentliche App**, als *ein* JSON-kodierter String: HTML-Markup + CSS + der komplette App-Code |
+
+Eingebettete Assets (alle gzip+base64 im Manifest, keine externen Requests):
+
+| Asset | Größe entpackt | Rolle |
+|---|---|---|
+| 3Dmol.js | 537 KB | WebGL-Viewer, alle 3D-Panels |
+| React 18.3.1 + ReactDOM (UMD, production) | 143 KB | Rendering-Unterbau |
+| dc-runtime (`support.js`) | 69 KB | Template-Compiler + `DCLogic`-Basisklasse; generiert, nicht von Hand editieren |
+| `gaussian-parser.js` | 56 KB | **`window.GaussianAnalyzer`** — Parsing + gesamte Analyse |
+| `gif-encoder.js` | 6 KB | `window.AMGif`, dependency-freier GIF89a/LZW-Encoder für Animations-Export |
+
+React wird über `window.__resources` auf die Blob-URL umgebogen (`cdn.ts` im
+dc-runtime). Die unpkg-URLs im CSP-Header sind reiner Fallback für gehostete
+Deployments — im ausgelieferten Zustand wird kein CDN kontaktiert.
+
+**Kein JSX, kein Babel.** Der App-Code wird vom dc-runtime per `new Function`
+ausgewertet (`evalDcLogic`). Babel würde nur bei JSX-`x-import` nachgeladen —
+und zwar von unpkg. Also: kein JSX einführen.
+
+### Repo-Layout
+
+```
+src/index.html          ← die App (Single-File-Bundle). Das ist das Produkt.
+src/gaussian-parser.js  ← VERALTETER Extrakt, wird zur Laufzeit NICHT geladen (s. u.)
+src/support.js          ← VERALTETER Extrakt des dc-runtime, ebenfalls tot
+src/gif-encoder.js      ← identisch zum eingebetteten Asset
+Dockerfile              ← busybox httpd, serviert src/ auf :8080
+.github/workflows/build.yml ← baut/pusht das Docker-Image nach ghcr.io
+```
+
+`build.yml` ist **kein App-Build**: es verpackt `src/` nur in ein Container-Image.
+Die HTML-Datei wird dabei unverändert kopiert.
+
+⚠️ **Die losen `src/*.js` sind Kopien, keine Quellen.** `index.html` lädt
+ausschließlich seine eigenen eingebetteten Assets. `src/gaussian-parser.js`
+(689 Zeilen) hinkt der eingebetteten Version (1134 Zeilen) hinterher — u. a.
+fehlen dort `parseArchiveGeometry`, `parseOptimization`/`parseScan`-Exporte und
+die Bridging-Logik. `src/support.js` ist ebenfalls älter. Änderungen an diesen
+Dateien haben **null Wirkung** auf die App. Wer den Parser ändert, muss das
+Asset im Manifest ändern (Rezept in §4).
+
+---
+
+## 2. Wo was liegt
+
+### Parsing-/Analyse-Schicht: `GaussianAnalyzer`
+
+Manifest-Asset mit `mime: application/javascript`, erkennbar am Kopf
+`/* Gaussian anharmonic frequency log parser + analysis. */`. Reines JS, keine
+Abhängigkeiten, exportiert genau ein Global: `window.GaussianAnalyzer`.
+Portiert aus dem AG-Horch-*ModeAnalysis*-Notebook. Vollständige
+Funktionsreferenz: §6.
+
+Der Parser kennt **kein** DOM, kein React, keine Persistenz. Er bekommt Text
+und Parameter und gibt ein Objekt zurück. Diese Trennung bitte halten: neue
+Analyse gehört in den Parser, neue Darstellung in die UI.
+
+### UI-Schicht: `class Component extends DCLogic`
+
+Im Template, im `<script type="text/x-dc" data-dc-script>`-Block (ca. 4.800
+Zeilen). Darüber im `<x-dc>`-Element liegt das deklarative Markup mit
+`{{ binding }}`, `<sc-if>` und `<sc-for>`.
+
+Es gibt **genau eine Komponente**. Kein Component-Tree, keine Props-Drilling —
+ein einziger State-Baum und eine `renderVals()`-Methode, die das flache Objekt
+liefert, gegen das das Markup rendert. Ankerpunkte (per Methodennamen suchen,
+Zeilennummern sind im JSON-String nutzlos):
+
+| Bereich | Methoden |
+|---|---|
+| Log-Verwaltung | `addLog`, `readFiles`, `removeLogById`, `recompute` |
+| Sessions | `_serializeSession`, `_applySession`, `saveSession`, `loadSession`, `_openDB` |
+| Gruppen & Serien | `createGroupFromLog`, `_buildSeriesAnalysis`, `_buildSeriesOpt`, `_refreshSeriesSuggestion`, `_seriesIssues` |
+| Tabs / Split | `tabIdsFor`, `PANEB_TABS`, `paneTabIds`, `setPaneTab`, `drawPane` |
+| 3D (3Dmol) | `buildViewer`, `refreshMolecule`, `_computeOrient`, `_styleMolecule`, `_renderPhase`, `_hbonds` |
+| 3D Overlay (Compare→Structures) | `buildOverlayViewer`, `_addOverlayModel`, `refreshOverlay`, `overlayPair` |
+| Canvas-Plots | `drawSpectrum`, `drawDelta`, `drawCross`, `drawPR`, `drawCompare`, `drawOptChart`, `drawScanProfile`, `drawOrbitalDiagram`, `drawEnergyChart`, `drawCmpContext` |
+| Observation Frames | `setObsFrames`, `commitObsFrame`, `effDeltaWindow`, `obsFreqAt` |
+| Export | `exportImage`, `_exportCanvasPng`, `_exportCsvFor`, `_saveBlob`, `_estGifSize` |
+| i18n | `_buildStrings` (en/de), `t(key)` |
+| Theming | `ACCENTS`, `APPEARANCES`, `applyTheme`, `persistPrefs` |
+
+Tab-Sichtbarkeit hängt am Inhalt des Logs — `tabIdsFor(analysis)` ist die
+einzige Quelle der Wahrheit dafür (z. B. `cross` nur bei `a.hasAnharm`,
+`orbitals` nur bei `a.orbitals`).
+
+### Persistenz
+
+* `localStorage["amaPrefs"]` — nur Preferences (Sprache, Akzent, Appearance,
+  Nav-Richtung, Home-Animation). Nie Logdaten.
+* IndexedDB `amaSessions`, Stores `meta` (Name/Datum/Größe) und `data`
+  (Payload). Export als `.amaz.json`-Datei.
+
+---
+
+## 3. Harte Constraints — gelten bei JEDER Änderung
+
+1. **Es bleibt eine einzige HTML-Datei.** Keine zusätzlichen Runtime-Dateien,
+   keine relativen `src=`/`href=`-Verweise auf Nachbardateien. Alles, was die
+   App braucht, gehört ins Manifest oder ins Template.
+2. **Kein Build-Step.** Kein npm, kein Bundler, kein Transpiler, kein JSX.
+   Der Code muss so, wie er in der Datei steht, im Browser laufen.
+   `.github/workflows/build.yml` darf weiterhin nur das Docker-Image bauen.
+3. **Keine externen Requests zur Laufzeit.** Kein `fetch` auf http(s), kein
+   XHR, kein WebSocket, keine Web-Fonts, keine CDN-Scripts, kein Telemetrie-
+   Ping. Aktueller Stand: die einzigen zwei `fetch()`-Aufrufe holen `data:`-URIs
+   aus `v3.pngURI()` für den PNG-Export — das ist erlaubt und soll so bleiben.
+   Vor dem Commit prüfen:
+   ```
+   grep -n "XMLHttpRequest\|WebSocket\|sendBeacon\|EventSource\|fetch(\"http\|fetch('http" src/index.html
+   ```
+4. **Keine Logdaten verlassen den Browser.** Das ist die Eigenschaft, die das
+   Tool für unveröffentlichte Rechnungen brauchbar macht. Parsing, Analyse und
+   Export laufen vollständig client-seitig; Speicherung ausschließlich in
+   IndexedDB/localStorage bzw. per benutzerinitiiertem Download. Auch kein
+   „anonymes" Sammeln von Dateinamen, Formeln oder Fehlermeldungen.
+5. **Session-Kompatibilität.** `.amaz.json` speichert **Rohtext** der Logs
+   (`logs[].text`), nicht das geparste Ergebnis — deshalb reparst eine Session
+   beim Laden mit dem aktuellen Parser und bleibt über Versionsgrenzen hinweg
+   gültig. Konkret:
+   * `_serializeSession()` darf `text` nie durch abgeleitete Daten ersetzen.
+   * `_applySession()` muss ältere Payloads tolerieren: unbekannte/fehlende
+     Felder werden über `Object.assign` auf die aktuellen Defaults gemerged
+     (`merge(k)`), fehlende State-Gruppen fallen auf den Default zurück.
+   * Neue State-Gruppen: Default in `constructor` **und** Merge in
+     `_applySession` ergänzen, sonst bricht eine alte Session.
+   * `version: 2, app: "ama"` — `app` wird beim Laden geprüft. Beim Anheben von
+     `version` muss der Ladepfad die alte Version weiterhin akzeptieren.
+6. **Analyse-Parameter sind Teil der Session** (`params`), damit ein
+   Vergleichsdatensatz reproduzierbar bleibt. Defaults nicht stillschweigend
+   ändern — sie stehen in der Doku und in publizierten Methodenteilen.
+7. **Keine Skalierungsfaktoren, kein Nachrechnen.** Frequenzen, Intensitäten,
+   Anharmonizitäten und Energien werden gelesen, nie korrigiert.
+
+---
+
+## 4. Wie man die Datei überhaupt editiert
+
+Weil Template und Assets JSON-/base64-kodiert in `src/index.html` liegen, ist
+direktes Editieren mit `Edit` nur für den Loader (Zeilen 1–382) sinnvoll. Für
+App-Code und Parser: entpacken → editieren → exakt so wieder einpacken.
+
+**Entpacken:**
+
+```python
+import re, json, gzip, base64
+s = open("src/index.html", encoding="utf-8").read()
+grab = lambda k: re.search(r'(<script type="__bundler/%s">)(.*?)(</script>)' % k, s, re.S)
+
+tpl = json.loads(grab("template").group(2))          # -> str, das ganze App-HTML
+man = json.loads(grab("manifest").group(2))
+uuid = next(k for k, v in man.items()
+            if b"GaussianAnalyzer" in gzip.decompress(base64.b64decode(v["data"]))[:400])
+parser = gzip.decompress(base64.b64decode(man[uuid]["data"])).decode()
+```
+
+**Einpacken — die Escaping-Regeln sind zwingend, sonst zerreißt das
+`</script>` im String das Script-Tag:**
+
+```python
+def pack(obj, compact):                      # compact=True für manifest/ext_resources
+    sep = (",", ":") if compact else (", ", ": ")
+    body = json.dumps(obj, ensure_ascii=False, separators=sep).replace("</", "<\\u002F")
+    return "\n" + body + "\n  "              # führendes \n und abschließendes "\n  " beibehalten
+
+man[uuid]["data"] = base64.b64encode(gzip.compress(parser.encode())).decode()
+out = s[:grab("template").start(2)] + pack(tpl, False) + s[grab("template").end(2):]
+```
+
+Verifiziert: unverändertes Ent-/Einpacken mit diesen Regeln ist byte-identisch
+zum Original (Template: `ensure_ascii=False`, Default-Separatoren; Manifest:
+`ensure_ascii=False`, kompakte Separatoren). Das gzip-Blob muss **nicht**
+byte-identisch sein, nur gültig.
+
+Nach jeder Änderung: Datei im Browser öffnen und die Konsole prüfen — der
+Loader schreibt Fehler sowohl in die Konsole als auch in ein rotes Overlay
+unten im Bild.
+
+---
+
+## 5. Testen
+
+Es gibt keine automatisierten Tests und kein Test-Framework. Getestet wird
+manuell im Browser:
+
+1. `src/index.html` direkt im Browser öffnen (Doppelklick oder
+   `file:///…/src/index.html`). Alternativ, wenn ein echter Origin gebraucht
+   wird: `docker build -t ama . && docker run --rm -p 8080:8080 ama` →
+   `http://localhost:8080/index.html`.
+2. Warten, bis „Unpacking…" verschwindet — bleibt es stehen oder erscheint das
+   rote Fehler-Overlay, ist das Bundle kaputt.
+3. Logs aus `testdata/` per Drag & Drop oder **+ Add .log / .out** laden.
+   ⚠️ `testdata/` existiert im Repo derzeit nicht und ist auch nicht in
+   `.gitignore` — Logdateien sind unveröffentlichte Forschungsdaten und dürfen
+   nicht eingecheckt werden. Das Verzeichnis lokal anlegen und befüllen.
+4. Testabdeckung braucht mehrere Logsorten, weil die Tabs vom Loginhalt
+   abhängen (`tabIdsFor`):
+   * `freq=anharm` (VPT2) — voller Umfang inkl. Δ-Matrix und 2D-IR
+   * harmonisches `freq` — alles außer den beiden 2D-Tabs
+   * reines `opt` und `opt=modredundant` (Scan)
+   * Single-Point
+   * Log mit *Error termination* / abgeschnitten
+   * `freq=(anharm,restart)` — trifft den Archiv-Block-Fallback der Geometrie
+   * mehrere Logs gleichzeitig für Compare/Serien
+5. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
+   Export file), Datei neu laden, Session importieren — die Werte müssen
+   identisch reproduziert werden. Das testet gleichzeitig den Rohtext-Vertrag
+   aus §3.5.
+6. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
+   schnellste Art, unbeabsichtigte Analyse-Änderungen zu sehen.
+
+---
+
+## 6. Bestehende Parser-Funktionen (nicht neu erfinden)
+
+Alles unter `window.GaussianAnalyzer`. `text` ist immer der volle Logtext.
+Reine Funktionen, kein State.
+
+### Einstiegspunkt
+
+**`analyzeLog(text, params) → analysis`** — ruft alle Parser auf, baut
+Konnektivität, interne Koordinaten, Liganden, klassifiziert jede Mode und
+paart harmonisch↔anharmonisch. Wirft, wenn weder Orientierungsblock noch
+Archiv-Geometrie da ist; wirft außerdem, wenn kein Harmonic-Block **und** kein
+`opt`/`SCF Done` existiert (sonst leere Modenliste).
+
+Rückgabe:
+
+```
+{ atnums, coords, syms, atomLabels, isotopes, masses, nAtoms, bonds, ligands,
+  modes, hasAnharm, deltaMatrix(win), energies, opt, scan, jobInfo, orbitals,
+  population, nImag, params, nStretch, nAngle, symFor, massFor, rcovFor, cpkColor }
+```
+
+`modes[]` (aufsteigend nach ω, neu indiziert ab 1):
+`{ mode, harmIdx, freqHarm, freqAnharm|NaN, anharmShift|NaN, anhMode|null,
+   redMass, frcConst, irHarm, irAnharm|NaN, PR, PRnorm, character, components,
+   composition, bondLabel, specLabel, breakdown, ligandShares, disp, internalFrac }`
+
+`deltaMatrix(win)` ist eine Closure über die VPT2-Tabellen. `win` ist
+`[lo,hi]` oder `[[lo,hi],…]`; liefert
+`{ labels, cells:[[{val|null, diag}]], modeIds, freqs, groupOf, nGroups }`
+mit Δᵢᵢ = 2νᵢ − ν₂ᵢ auf der Diagonale und Δᵢⱼ = νᵢ + νⱼ − νᵢ₊ⱼ darunter;
+`null`, wenn Oberton/Kombinationsbande fehlt.
+
+### Block-Parser (alle regex-/zeilenbasiert auf Gaussian-Standardausgabe)
+
+| Funktion | Ein | Aus |
+|---|---|---|
+| `parseGeometry(text)` | | `{atnums, coords}` aus dem **letzten** `Standard orientation:` (sonst `Input orientation:`), sonst Archiv-Fallback; wirft, wenn nichts da ist |
+| `parseArchiveGeometry(text)` | intern | `{atnums, coords}` aus dem `1\1\GINC-…`-Archivblock oder `null` |
+| `parseHarmonicModes(text, nAtoms)` | | `{freq, redMass, frcConst, irInt, disp, atomOrder}`; `disp[mode][atom] = [x,y,z]`; letzter Harmonic-Block, 3-Spalten-Layout (kein `HPModes`); wirft ohne Block |
+| `parseAnharmFundamentals(text)` | | `[{anhMode, Eharm, Eanharm, Iharm, Ianharm}]` oder `null` |
+| `parseOvertones(text)` | | `{anhMode: E_anharm}` oder `null` |
+| `parseCombinationBands(text)` | | `[{i, j, Eanharm}]` oder `null` |
+| `parseEnergies(text)` | | `{method, scf, zpeCorr, enthalpyCorr, gibbsCorr, eZPE, eThermal, enthalpy, gibbs, charge, mult, temperature, pressure, hasThermo}`, alles in Hartree |
+| `parseJobInfo(text)` | | `{route, title, charge, mult, chk, mem, nproc, method, basis, theoryArchive, basisArchive, formula, jobType, isRestart, hasOpt, hasFreq, optCriteria, dispersion, hasScrf, scrfModel, solventName, terminated:"normal"\|"error"\|"incomplete", normalCount, errorLine, errorReason, cpuSeconds, wallSeconds, hasAny}` |
+| `parseOptimization(text)` | | `{steps, completed, stopped, nAtoms, atnums, perStepCharges}` oder `null`; `steps[] = {n, geom, geomIdx, energy, charges, maxForce, rmsForce, maxDisp, rmsDisp, predDE, converged}`, jedes Kriterium `{val, thr, conv}` |
+| `parseScan(text)` | | `{points:[{n, geom, energy, coord?}], coordName, nAtoms, atnums}` oder `null`; braucht ≥2 Punkte |
+| `parseOrbitals(text)` | | `{restricted, hartreeToEv, alpha:{occ,virt,homo,lumo,gap,nOcc,nVirt}, beta?, homo, lumo, gap}` oder `null`; letzter zusammenhängender Eigenvalue-Block, Werte per Signed-Float-Regex (Gaussian klebt sie zusammen) |
+| `parsePopulation(text)` | | `{charges[], spins[]\|null}` aus dem letzten Mulliken-Block, oder `null` |
+| `parseAtomMasses(text, nAtoms)` | intern | `[mass\|null]` aus `Atom N has atomic number Z and mass M` — die Massen, die Gaussian tatsächlich benutzt hat (`readisotopes`) |
+
+`parseOptimization`, `parseScan`, `parseJobInfo`, `parseOrbitals` und
+`parsePopulation` sind zusätzlich einzeln exportiert (u. a. für den
+Serien-Merge in der UI).
+
+### Analyse-Bausteine (intern, nicht exportiert)
+
+| Funktion | Aus |
+|---|---|
+| `buildBonds(atnums, coords, tolFactor)` | `[[i, j, r]]` für `r ≤ tolFactor·(rcov_i + rcov_j)` |
+| `buildInternals(atnums, coords, bonds, linearAngleDeg, labFn)` | `{stretches, angles}`; jede Koordinate `{type, label, svecs:[[atom, s]], scale, kind?}`. Stretch `scale = 1`, Winkel `scale = √(R₁R₂)`; Winkel > `linearAngleDeg` werden durch **zwei** orthogonale Linear-Bends ersetzt (`kind:"linbend"`, Label-Suffix `(lin)`). C/N mit ≥2 Metallnachbarn bekommen `μ`-Präfix. Keine Torsionen, keine Out-of-Plane |
+| `project(coord, dispMode)` | `q = scale · Σ s_a·d_a` |
+| `analyzeMode(dispMode, stretches, angles, topN)` | `{internalFrac, stretchFrac, components:[[name, %]], bondLabel}`; `components` als `ν(...)`/`δ(...)`, normiert auf die erfasste Summe; `internalFrac = √(captured/Σ|d|²)` |
+| `modeBreakdown(dispMode, stretches, angles)` | `[{label, kind, type, share}]` pro **Instanz** (Linear-Bend-Paare zusammengefasst) |
+| `detectLigands(atnums, coords, bonds)` | Gruppen `{id, kind:"metal"\|"ligand"\|"fragment", atoms, donor, formula, name, size}` — Metalle raus, Zusammenhangskomponenten, Metallkontakt = Ligand |
+| `ligandShares(dispMode, groups, masses, massWeighted)` | `[% pro Gruppe]` |
+| `participationRatio(dispMode, masses, massWeighted)` | `(Σw)²/Σw²` mit `w_a = m_a|d_a|²` |
+| `classify(freq, prNorm, info, P)` | Charakterstring; unter `internalFracMin` → „Skeletal / torsional (low frequency)" / „Skeletal / torsional" / „Deformation mode" |
+| `labelForSpectrum(info, freq, prNorm, P)` | Kurzlabel für die Peak-Annotation |
+| `ligandFormula(atoms, atnums, donor)` | Formel donor-first, dann Hill-artig, mit Subscripts |
+
+### Wiederverwendbare Helfer (exportiert)
+
+| Funktion | Ein | Aus |
+|---|---|---|
+| `compositionVector(mode, opts)` | Mode | `{typkey: anteil}` (0–1); D wird auf H normalisiert, außer `opts.normalizeIsotopes === false` |
+| `modeSimilarity(ma, mb, opts)` | zwei Modes | Score in [0,1]: `wComp·cos + wFreq·gauss(Δν) + wSpec·δ_label`, Defaults `0.62 / 0.23 / 0.15`, `freqSigma = 130` |
+| `matchMode(mode, candidates, opts)` | | `{mode, score, index}` oder `null` unter `minScore` (Default 0.35) |
+| `matchModes(modesA, modesB, opts)` | | `[{a, b\|null, score}]` in A-Reihenfolge; greedy nach Score, `oneToOne` Default `true` |
+| `isotopeShiftedFreq(mode, atnums, massForAtom)` | | `{harm, anharm, ratio, dHarm}`; `ω' = ω·√(μ/μ')` bei fixem `d`, gleicher absoluter Shift auf die anharmonische Frequenz |
+| `parseExperimental(text)` | Paste-Text | `{kind:"peaks"\|"trace"\|"empty", peaks:[{x,i}], points:[{x,y}]}`; Kommentarzeilen (`#`, `;`, `%`) und Zeilen mit ≥3 Buchstaben werden ignoriert |
+| `lorentzian(freqs, intens, x, fwhm)` | Sticks + Grid | `Float64Array`; **peak-höhen-normiert**, nicht flächennormiert |
+| `sym(z)`, `mass(z)`, `rcov(z)`, `cpkColor(z)`, `ELEMENTS`, `CPK`, `ISOTOPES` | | Elementtabellen (Cordero-artige Kovalenzradien) |
+
+### Analyse-Parameter (`params`, zweites Argument von `analyzeLog`)
+
+| Key | Default (UI) | Wirkung |
+|---|---|---|
+| `bondTolFactor` | 1.30 | Bindungserkennung → interne Koordinaten, Liganden, μ-Zuordnung, 3D-Bindungen |
+| `linearAngleDeg` | 150.0 | Schwelle für Linear-Bend-Ersatz |
+| `internalFracMin` | 0.15 | unter `f_int` generischer Charaktername |
+| `dominantShare` | 50.0 | ein Typ benennt die Mode allein |
+| `coupledShare` | 30.0 | zwei Typen → „coupled" |
+| `massWeightedPR` | `true` | Massengewichtung für PR und Ligandenanteile |
+| `topNBonds` | 2 | Einträge in `bondLabel` |
+| `freqMatchTol` | 2.0 | Fenster für die harmonisch↔VPT2-Paarung |
+
+⚠️ Der eingebaute Default von `internalFracMin` in `analyzeLog` ist **0.22**,
+die UI übergibt aber immer **0.15** (`state.params`). Effektiv gilt 0.15; wer
+den Parser standalone aufruft, bekommt 0.22. Beim Ändern beide Stellen anfassen.
+
+Parameteränderungen lösen `recompute()` aus, das **alle** geladenen Logs neu
+analysiert (130 ms debounced) — das ist Absicht: ein Vergleichsdatensatz muss
+mit identischen Parametern analysiert sein.
+
+---
+
+## 7. Stand des Repos
+
+Das eingecheckte `src/index.html` ist **v1.0.3** (About-Panel). Die separat
+gelieferte `AMAV1.0.5.html` ist neuer (v1.0.5) und weicht in Template und
+dc-runtime ab; der Parser ist in beiden byte-identisch. Diese CLAUDE.md
+beschreibt beide, weil sich an Architektur und Verträgen nichts geändert hat —
+aber wenn v1.0.5 die Referenz sein soll, muss es zuerst nach `src/index.html`
+committet werden, sonst arbeitet man an einer älteren Basis.
