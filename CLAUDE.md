@@ -97,6 +97,8 @@ Zeilennummern sind im JSON-String nutzlos):
 | Bereich | Methoden |
 |---|---|
 | Log-Verwaltung | `addLog`, `readFiles`, `removeLogById`, `recompute` |
+| Metadaten-Tagging | `_deriveMeta`, `_metaFor`, `_metaRe`, `_canonSolvent`, `_canonModel`, `_metaConflictText`, `SOLVENT_ALIASES`, `META_PATTERN_DEFAULT` |
+| Grid-Ansicht | `_gridData`, `_cellKey`, `gridCellClick`, `_setCompareSel`, `_selectedIds`, `setGridModel` |
 | Sessions | `_serializeSession`, `_applySession`, `saveSession`, `loadSession`, `_openDB` |
 | Gruppen & Serien | `createGroupFromLog`, `_buildSeriesAnalysis`, `_buildSeriesOpt`, `_refreshSeriesSuggestion`, `_seriesIssues` |
 | Tabs / Split | `tabIdsFor`, `PANEB_TABS`, `paneTabIds`, `setPaneTab`, `drawPane` |
@@ -230,11 +232,22 @@ manuell im Browser:
    * Log mit *Error termination* / abgeschnitten
    * `freq=(anharm,restart)` — trifft den Archiv-Block-Fallback der Geometrie
    * mehrere Logs gleichzeitig für Compare/Serien
-5. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
+5. Grid & Tagging (`meta`-State): Muster leeren / ungültig machen / ohne
+   benannte Gruppen — die App darf nie ausfallen, nicht zugeordnete Logs
+   müssen unter „Nicht eingeordnet" sichtbar bleiben. Ein Log, dessen
+   Dateiname dem SCRF-Block widerspricht, muss ⚠ am Chip **und** in der Zelle
+   tragen. Für die volle 5×4×2-Geometrie braucht man keine echten 15-MB-Logs:
+   winzige synthetische Logs (Input-Orientation-Block, ein Harmonic-Block,
+   SCRF-Echo, `Normal termination`) reichen aus, um `analyzeLog` zu
+   befriedigen, und laufen in Sekunden.
+   ⚠ Die Auswahl in `compare.sel` ist **opt-out** (`sel[id] !== false`) — wer
+   sie programmatisch setzt, muss die Map vollständig schreiben
+   (`_setCompareSel`), sonst bleiben ungenannte Logs ausgewählt.
+6. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
    Export file), Datei neu laden, Session importieren — die Werte müssen
    identisch reproduziert werden. Das testet gleichzeitig den Rohtext-Vertrag
    aus §3.5.
-6. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
+7. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
    schnellste Art, unbeabsichtigte Analyse-Änderungen zu sehen.
 
 ### Wie echte Referenzlogs aussehen
@@ -259,13 +272,14 @@ für kaputt hält:
   Basis kommen dann ausschließlich aus dem Archivblock (`theoryArchive`
   = `RBP86`, `basisArchive` = `Gen`). Beim Anzeigen immer beide Quellen
   berücksichtigen.
-* **SMD ist im Setup-Panel nicht von PCM unterscheidbar.** Gaussian echot auch
-  für `SCRF=(SMD,…)` den Block `Polarizable Continuum Model (PCM)` mit
+* **`scrfModel` unterscheidet SMD nicht von PCM.** Gaussian echot auch für
+  `SCRF=(SMD,…)` den Block `Polarizable Continuum Model (PCM)` mit
   `Model : PCM.`; nur `Atomic radii : SMD-Coulomb.` verrät SMD. `scrfModel`
-  liefert deshalb für beide `"PCM"`, und die UI zeigt beide als „PCM · Water"
-  (`renderVals`, Variable `solvent`). Für eine SMD-vs-PCM-Serie ist das eine
-  echte Verwechslungsgefahr — wer das fixt, prüft `SCRF=(SMD` in der Route
-  oder `SMD-Coulomb` im Body und lässt `scrfModel` selbst unverändert.
+  liefert deshalb für beide `"PCM"`, und das Setup-Panel zeigt beide als
+  „PCM · Water" (`renderVals`, Variable `solvent`). Dafür gibt es
+  **`jobInfo.scrfKind`** (Route-Keyword, Fallback `SMD-Coulomb`) — das ist die
+  Quelle, die das Metadaten-Tagging benutzt. `scrfModel` bleibt bewusst
+  unverändert, weil es wiedergibt, was Gaussian gedruckt hat.
 * **VPT2 paart hier 66/66 Moden** bei `freqMatchTol = 2.0`; alle vier CO- und
   beide CN-Streckschwingungen liegen zwischen 1836 und 2082 cm⁻¹.
 * **Ligandenerkennung** liefert bei `bondTolFactor = 1.30` das erwartete Bild:
@@ -316,7 +330,7 @@ mit Δᵢᵢ = 2νᵢ − ν₂ᵢ auf der Diagonale und Δᵢⱼ = νᵢ + ν�
 | `parseOvertones(text)` | | `{anhMode: E_anharm}` oder `null` |
 | `parseCombinationBands(text)` | | `[{i, j, Eanharm}]` oder `null` |
 | `parseEnergies(text)` | | `{method, scf, zpeCorr, enthalpyCorr, gibbsCorr, eZPE, eThermal, enthalpy, gibbs, charge, mult, temperature, pressure, hasThermo}`, alles in Hartree |
-| `parseJobInfo(text)` | | `{route, title, charge, mult, chk, mem, nproc, method, basis, theoryArchive, basisArchive, formula, jobType, isRestart, hasOpt, hasFreq, optCriteria, dispersion, hasScrf, scrfModel, solventName, terminated:"normal"\|"error"\|"incomplete", normalCount, errorLine, errorReason, cpuSeconds, wallSeconds, hasAny}` |
+| `parseJobInfo(text)` | | `{route, title, charge, mult, chk, mem, nproc, method, basis, theoryArchive, basisArchive, formula, jobType, isRestart, hasOpt, hasFreq, optCriteria, dispersion, hasScrf, scrfModel, scrfKind, solventName, terminated:"normal"\|"error"\|"incomplete", normalCount, errorLine, errorReason, cpuSeconds, wallSeconds, hasAny}` |
 | `parseOptimization(text)` | | `{steps, completed, stopped, nAtoms, atnums, perStepCharges}` oder `null`; `steps[] = {n, geom, geomIdx, energy, charges, maxForce, rmsForce, maxDisp, rmsDisp, predDE, converged}`, jedes Kriterium `{val, thr, conv}` |
 | `parseScan(text)` | | `{points:[{n, geom, energy, coord?}], coordName, nAtoms, atnums}` oder `null`; braucht ≥2 Punkte |
 | `parseOrbitals(text)` | | `{restricted, hartreeToEv, alpha:{occ,virt,homo,lumo,gap,nOcc,nVirt}, beta?, homo, lumo, gap}` oder `null`; letzter zusammenhängender Eigenvalue-Block, Werte per Signed-Float-Regex (Gaussian klebt sie zusammen) |
@@ -389,9 +403,7 @@ mit identischen Parametern analysiert sein.
 
 ## 7. Stand des Repos
 
-Das eingecheckte `src/index.html` ist **v1.0.3** (About-Panel). Die separat
-gelieferte `AMAV1.0.5.html` ist neuer (v1.0.5) und weicht in Template und
-dc-runtime ab; der Parser ist in beiden byte-identisch. Diese CLAUDE.md
-beschreibt beide, weil sich an Architektur und Verträgen nichts geändert hat —
-aber wenn v1.0.5 die Referenz sein soll, muss es zuerst nach `src/index.html`
-committet werden, sonst arbeitet man an einer älteren Basis.
+Das eingecheckte `src/index.html` ist **v1.0.5** plus das Metadaten-/Grid-Feature
+(`meta`-State, `scrfKind` im Parser). Der Parser weicht damit von der
+ausgelieferten `AMAV1.0.5.html` ab — additiv, alle bestehenden Felder
+unverändert.
