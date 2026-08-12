@@ -218,9 +218,9 @@ manuell im Browser:
 2. Warten, bis „Unpacking…" verschwindet — bleibt es stehen oder erscheint das
    rote Fehler-Overlay, ist das Bundle kaputt.
 3. Logs aus `testdata/` per Drag & Drop oder **+ Add .log / .out** laden.
-   ⚠️ `testdata/` existiert im Repo derzeit nicht und ist auch nicht in
-   `.gitignore` — Logdateien sind unveröffentlichte Forschungsdaten und dürfen
-   nicht eingecheckt werden. Das Verzeichnis lokal anlegen und befüllen.
+   ⚠️ `testdata/` ist per `testdata/.gitignore` komplett ignoriert und muss es
+   bleiben — Logdateien sind unveröffentlichte Forschungsdaten. Verzeichnis
+   lokal befüllen, nie einchecken.
 4. Testabdeckung braucht mehrere Logsorten, weil die Tabs vom Loginhalt
    abhängen (`tabIdsFor`):
    * `freq=anharm` (VPT2) — voller Umfang inkl. Δ-Matrix und 2D-IR
@@ -236,6 +236,40 @@ manuell im Browser:
    aus §3.5.
 6. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
    schnellste Art, unbeabsichtigte Analyse-Änderungen zu sehen.
+
+### Wie echte Referenzlogs aussehen
+
+Gemessen an drei Produktionslogs des Solvens-Workflows (Isomer 11,
+`[FeFe]`-Mimik, `C8H5Fe2N3O4S2(2-)`, BP86/Gen, `freq=anharm` in SMD/Water bzw.
+PCM/Water). Diese Eigenschaften sollte man kennen, bevor man Parser-Verhalten
+für kaputt hält:
+
+* **~15 MB pro Datei, 24 Atome, 66 Moden.** `analyzeLog` braucht dafür ~1–2 s
+  in Node; im Browser entsprechend. Mehrere solche Logs gleichzeitig plus
+  `recompute()` bei jedem Parameter-Slider ist der Performance-Worst-Case.
+* **Kein `Standard orientation:`, genau ein `Input orientation:`.** Die Jobs
+  laufen mit `geom=check guess=read` aus dem Checkpoint. Der Archiv-Fallback
+  greift hier *nicht* — der Input-Orientation-Pfad ist der reale Normalfall,
+  nicht der Ausnahmefall.
+* **`isRestart` bleibt `undefined`.** `geom=check` ist kein `freq=(...,restart)`;
+  das Flag ist absichtlich eng. Kein Bug.
+* **`J.method`/`J.basis` sind `undefined`.** Die Routen-Zeile
+  `# bp86 chkbasis freq=anharm SCRF=(SMD,Solvent=Water) …` enthält kein
+  `method/basis`-Token, weil das Basisset aus dem Checkpoint kommt. Methode und
+  Basis kommen dann ausschließlich aus dem Archivblock (`theoryArchive`
+  = `RBP86`, `basisArchive` = `Gen`). Beim Anzeigen immer beide Quellen
+  berücksichtigen.
+* **SMD ist im Setup-Panel nicht von PCM unterscheidbar.** Gaussian echot auch
+  für `SCRF=(SMD,…)` den Block `Polarizable Continuum Model (PCM)` mit
+  `Model : PCM.`; nur `Atomic radii : SMD-Coulomb.` verrät SMD. `scrfModel`
+  liefert deshalb für beide `"PCM"`, und die UI zeigt beide als „PCM · Water"
+  (`renderVals`, Variable `solvent`). Für eine SMD-vs-PCM-Serie ist das eine
+  echte Verwechslungsgefahr — wer das fixt, prüft `SCRF=(SMD` in der Route
+  oder `SMD-Coulomb` im Body und lässt `scrfModel` selbst unverändert.
+* **VPT2 paart hier 66/66 Moden** bei `freqMatchTol = 2.0`; alle vier CO- und
+  beide CN-Streckschwingungen liegen zwischen 1836 und 2082 cm⁻¹.
+* **Ligandenerkennung** liefert bei `bondTolFactor = 1.30` das erwartete Bild:
+  2 × `Fe` (metal), Dithiolat-Brücke `S₂C₂H₅N`, 4 × `CO`, 2 × `CN`.
 
 ---
 
@@ -338,6 +372,14 @@ Serien-Merge in der UI).
 ⚠️ Der eingebaute Default von `internalFracMin` in `analyzeLog` ist **0.22**,
 die UI übergibt aber immer **0.15** (`state.params`). Effektiv gilt 0.15; wer
 den Parser standalone aufruft, bekommt 0.22. Beim Ändern beide Stellen anfassen.
+
+⚠️ `internalFrac` ist **kein Anteil in [0,1]**. Weil der interne
+Koordinatensatz redundant ist, kann `captured` größer als `Σ|d|²` werden; in
+den Referenzlogs (§5) liegt `f_int` zwischen 0.49 und 3.72 bei Median ~1.6, und
+**keine einzige** Mode fällt unter 0.15. Die
+„Skeletal / torsional"-Fallbacks in `classify` sind für solche Metallcarbonyle
+also praktisch unerreichbar — wer die Schwelle anfasst oder `f_int` als
+Prozentwert darstellt, sollte das wissen.
 
 Parameteränderungen lösen `recompute()` aus, das **alle** geladenen Logs neu
 analysiert (130 ms debounced) — das ist Absicht: ein Vergleichsdatensatz muss
