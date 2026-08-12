@@ -99,6 +99,7 @@ Zeilennummern sind im JSON-String nutzlos):
 | Log-Verwaltung | `addLog`, `readFiles`, `removeLogById`, `recompute` |
 | Metadaten-Tagging | `_deriveMeta`, `_metaFor`, `_metaRe`, `_canonSolvent`, `_canonModel`, `_metaConflictText`, `SOLVENT_ALIASES`, `META_PATTERN_DEFAULT` |
 | Grid-Ansicht | `_gridData`, `_cellKey`, `gridCellClick`, `_setCompareSel`, `_selectedIds`, `setGridModel` |
+| Resonanzen | `_resonanceTable`, `_bandKeyMaps`, `_resLogs`, `_resFreq`, `RES_TYPE_ORDER` |
 | Sessions | `_serializeSession`, `_applySession`, `saveSession`, `loadSession`, `_openDB` |
 | Gruppen & Serien | `createGroupFromLog`, `_buildSeriesAnalysis`, `_buildSeriesOpt`, `_refreshSeriesSuggestion`, `_seriesIssues` |
 | Tabs / Split | `tabIdsFor`, `PANEB_TABS`, `paneTabIds`, `setPaneTab`, `drawPane` |
@@ -243,11 +244,16 @@ manuell im Browser:
    ⚠ Die Auswahl in `compare.sel` ist **opt-out** (`sel[id] !== false`) — wer
    sie programmatisch setzt, muss die Map vollständig schreiben
    (`_setCompareSel`), sonst bleiben ungenannte Logs ausgewählt.
-6. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
+6. Resonanzen: Log ohne Resonanzblock (harmonisch oder VPT2 ohne Treffer) muss
+   `resonances === null` liefern und die Ansicht leer, nicht kaputt, zeigen.
+   Gegenprobe für den Parser: die geparsten Zeilenzahlen müssen Gaussians eigenen
+   Zählern entsprechen (`N Active Fermi resonances over N` usw.) — das ist der
+   billigste Vollständigkeitstest, den es gibt.
+7. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
    Export file), Datei neu laden, Session importieren — die Werte müssen
    identisch reproduziert werden. Das testet gleichzeitig den Rohtext-Vertrag
    aus §3.5.
-7. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
+8. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
    schnellste Art, unbeabsichtigte Analyse-Änderungen zu sehen.
 
 ### Wie echte Referenzlogs aussehen
@@ -335,6 +341,7 @@ mit Δᵢᵢ = 2νᵢ − ν₂ᵢ auf der Diagonale und Δᵢⱼ = νᵢ + ν�
 | `parseScan(text)` | | `{points:[{n, geom, energy, coord?}], coordName, nAtoms, atnums}` oder `null`; braucht ≥2 Punkte |
 | `parseOrbitals(text)` | | `{restricted, hartreeToEv, alpha:{occ,virt,homo,lumo,gap,nOcc,nVirt}, beta?, homo, lumo, gap}` oder `null`; letzter zusammenhängender Eigenvalue-Block, Werte per Signed-Float-Regex (Gaussian klebt sie zusammen) |
 | `parsePopulation(text)` | | `{charges[], spins[]\|null}` aus dem letzten Mulliken-Block, oder `null` |
+| `parseResonances(text)` | | `{fermi, dd22, dd11, dd13, variational, ignored, counts, energies, depertByMode, afterByMode, hasDepert, list, byMode, total}` oder `null`. Modenindizes sind Gaussians VPT2-Nummerierung = `anhMode`, **nicht** das umindizierte `mode`. `list[]` = `{id, type, modes[], detail, value, freqDiff}`, `byMode[anhMode]` → Indizes in `list` |
 | `parseAtomMasses(text, nAtoms)` | intern | `[mass\|null]` aus `Atom N has atomic number Z and mass M` — die Massen, die Gaussian tatsächlich benutzt hat (`readisotopes`) |
 
 `parseOptimization`, `parseScan`, `parseJobInfo`, `parseOrbitals` und
@@ -387,6 +394,34 @@ Serien-Merge in der UI).
 die UI übergibt aber immer **0.15** (`state.params`). Effektiv gilt 0.15; wer
 den Parser standalone aufruft, bekommt 0.22. Beim Ändern beide Stellen anfassen.
 
+### Resonanzen (VPT2)
+
+`analyzeLog` hängt `resonances` an; fehlt der Block, ist das Feld `null` — kein Fehler.
+Zusätzlich trägt jede Mode `freqAnharmDepert` (deperturbierte Fundamentalfrequenz,
+`NaN` wenn Gaussian für sie keine gedruckt hat).
+
+Drei Dinge, die man wissen muss, bevor man daran etwas ändert:
+
+* **Was die App als `freqAnharm` zeigt, ist der variationskorrigierte Wert.** Die
+  IR-`Fundamental Bands`-Tabelle druckt `E(anharm)` = `E(after diag.)`. Die
+  deperturbierten Werte stehen nur in `Vibrational Energies (cm^-1)` und nur für
+  resonanzbetroffene Zustände (48 von 66 in den Referenzlogs), Obertöne `n(2)`
+  eingeschlossen.
+* **Der Umschalter deperturbiert/variational wirkt bewusst nur auf die
+  Resonanzen-Ansicht.** Δ-Matrix und Spektren behalten die variationalen Werte, weil
+  Gaussian für die zugrunde liegenden Obertöne und Kombinationsbanden kein
+  deperturbiertes Gegenstück druckt — eine gemischte Δ wäre bedeutungslos.
+* **Zeilen der Vergleichstabelle sind über das rohe VPT2-Indextupel identifiziert,
+  nicht über gepaarte Banden.** Das war eine bewusste Umkehr: `matchModes` ist in
+  genau der CO/CN-Region unzuverlässig, für die die Ansicht existiert. Gemessen an
+  den Referenzlogs verschieben sich die vier ν(C-O)-Banden gemeinsam um ~+35 cm⁻¹,
+  und weil ihre Kompositionen ununterscheidbar sind (~68 % ν(C-O), ~25 % ν(Fe-C)),
+  paart der Matcher den ganzen Block um eine Position versetzt — PCM-Bande 8
+  (1913.5) auf SMD-Bande 11 (1805.5) mit Score 0.93, dann 9→8, 10→9, 11→10 mit
+  0.99–1.00. Zusammenfassen auf dieser Basis würde Übereinstimmung erfinden. Die
+  Bandpaarung liefert deshalb nur einen **Hinweis** (⇄) und nennt immer beide
+  Indextupel.
+
 ⚠️ `internalFrac` ist **kein Anteil in [0,1]**. Weil der interne
 Koordinatensatz redundant ist, kann `captured` größer als `Σ|d|²` werden; in
 den Referenzlogs (§5) liegt `f_int` zwischen 0.49 und 3.72 bei Median ~1.6, und
@@ -403,7 +438,8 @@ mit identischen Parametern analysiert sein.
 
 ## 7. Stand des Repos
 
-Das eingecheckte `src/index.html` ist **v1.0.5** plus das Metadaten-/Grid-Feature
-(`meta`-State, `scrfKind` im Parser). Der Parser weicht damit von der
-ausgelieferten `AMAV1.0.5.html` ab — additiv, alle bestehenden Felder
-unverändert.
+Das eingecheckte `src/index.html` ist **v1.0.5** plus zwei Features:
+Metadaten-/Grid-Ansicht (`meta`-State, `scrfKind` im Parser) und Resonanz-Analyse
+(`parseResonances`, `resonances`/`freqAnharmDepert` in `analyzeLog`,
+Compare→Resonanzen, Schraffur in der Δ-Matrix). Der Parser weicht damit von der
+ausgelieferten `AMAV1.0.5.html` ab — additiv, alle bestehenden Felder unverändert.
