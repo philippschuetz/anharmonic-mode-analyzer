@@ -100,6 +100,7 @@ Zeilennummern sind im JSON-String nutzlos):
 | Metadaten-Tagging | `_deriveMeta`, `_metaFor`, `_metaRe`, `_canonSolvent`, `_canonModel`, `_metaConflictText`, `SOLVENT_ALIASES`, `META_PATTERN_DEFAULT` |
 | Grid-Ansicht | `_gridData`, `_cellKey`, `gridCellClick`, `_setCompareSel`, `_selectedIds`, `setGridModel` |
 | Resonanzen | `_resonanceTable`, `_bandKeyMaps`, `_resLogs`, `_resFreq`, `RES_TYPE_ORDER` |
+| Band-IDs | `_bandRegistry`, `_assignFamily`, `_seedBandIds`, `_refLogFor`, `_isomerGroups`, `_bandIdFor`, `_bandIdForAnh`, `_bandReviewRows`, `setBandOverride`, `renameBand` |
 | Sessions | `_serializeSession`, `_applySession`, `saveSession`, `loadSession`, `_openDB` |
 | Gruppen & Serien | `createGroupFromLog`, `_buildSeriesAnalysis`, `_buildSeriesOpt`, `_refreshSeriesSuggestion`, `_seriesIssues` |
 | Tabs / Split | `tabIdsFor`, `PANEB_TABS`, `paneTabIds`, `setPaneTab`, `drawPane` |
@@ -244,16 +245,21 @@ manuell im Browser:
    ⚠ Die Auswahl in `compare.sel` ist **opt-out** (`sel[id] !== false`) — wer
    sie programmatisch setzt, muss die Map vollständig schreiben
    (`_setCompareSel`), sonst bleiben ungenannte Logs ausgewählt.
-6. Resonanzen: Log ohne Resonanzblock (harmonisch oder VPT2 ohne Treffer) muss
+6. Band-IDs: Referenzwechsel muss alle Zuordnungen neu rechnen; ein Log ohne
+   Isomer-Tag darf keine IDs bekommen und muss in der Prüfansicht genannt werden;
+   eine im Ziel-Log fehlende Bande muss eine **Lücke** erzeugen und darf den Rest
+   des Blocks nicht verschieben (Regressionstest: eine CO-Bande aus dem Ziel-Log
+   entfernen, die übrigen fünf müssen ihre Zuordnung behalten).
+7. Resonanzen: Log ohne Resonanzblock (harmonisch oder VPT2 ohne Treffer) muss
    `resonances === null` liefern und die Ansicht leer, nicht kaputt, zeigen.
    Gegenprobe für den Parser: die geparsten Zeilenzahlen müssen Gaussians eigenen
    Zählern entsprechen (`N Active Fermi resonances over N` usw.) — das ist der
    billigste Vollständigkeitstest, den es gibt.
-7. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
+8. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
    Export file), Datei neu laden, Session importieren — die Werte müssen
    identisch reproduziert werden. Das testet gleichzeitig den Rohtext-Vertrag
    aus §3.5.
-8. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
+9. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
    schnellste Art, unbeabsichtigte Analyse-Änderungen zu sehen.
 
 ### Wie echte Referenzlogs aussehen
@@ -336,7 +342,7 @@ mit Δᵢᵢ = 2νᵢ − ν₂ᵢ auf der Diagonale und Δᵢⱼ = νᵢ + ν�
 | `parseOvertones(text)` | | `{anhMode: E_anharm}` oder `null` |
 | `parseCombinationBands(text)` | | `[{i, j, Eanharm}]` oder `null` |
 | `parseEnergies(text)` | | `{method, scf, zpeCorr, enthalpyCorr, gibbsCorr, eZPE, eThermal, enthalpy, gibbs, charge, mult, temperature, pressure, hasThermo}`, alles in Hartree |
-| `parseJobInfo(text)` | | `{route, title, charge, mult, chk, mem, nproc, method, basis, theoryArchive, basisArchive, formula, jobType, isRestart, hasOpt, hasFreq, optCriteria, dispersion, hasScrf, scrfModel, scrfKind, solventName, terminated:"normal"\|"error"\|"incomplete", normalCount, errorLine, errorReason, cpuSeconds, wallSeconds, hasAny}` |
+| `parseJobInfo(text)` | | `{route, title, charge, mult, chk, mem, nproc, method, basis, theoryArchive, basisArchive, formula, jobType, isRestart, hasOpt, hasFreq, optCriteria, dispersion, hasScrf, scrfModel, scrfKind, scrfEps, scrfEpsInf, solventName, terminated:"normal"\|"error"\|"incomplete", normalCount, errorLine, errorReason, cpuSeconds, wallSeconds, hasAny}` |
 | `parseOptimization(text)` | | `{steps, completed, stopped, nAtoms, atnums, perStepCharges}` oder `null`; `steps[] = {n, geom, geomIdx, energy, charges, maxForce, rmsForce, maxDisp, rmsDisp, predDE, converged}`, jedes Kriterium `{val, thr, conv}` |
 | `parseScan(text)` | | `{points:[{n, geom, energy, coord?}], coordName, nAtoms, atnums}` oder `null`; braucht ≥2 Punkte |
 | `parseOrbitals(text)` | | `{restricted, hartreeToEv, alpha:{occ,virt,homo,lumo,gap,nOcc,nVirt}, beta?, homo, lumo, gap}` oder `null`; letzter zusammenhängender Eigenvalue-Block, Werte per Signed-Float-Regex (Gaussian klebt sie zusammen) |
@@ -394,6 +400,37 @@ Serien-Merge in der UI).
 die UI übergibt aber immer **0.15** (`state.params`). Effektiv gilt 0.15; wer
 den Parser standalone aufruft, bekommt 0.22. Beim Ändern beide Stellen anfassen.
 
+### Band-IDs (Zuordnung über eine Serie)
+
+Ersetzt paarweises `matchModes` im Diagnosefenster. `_bandRegistry()` ist die einzige
+Quelle; `_bandIdFor(logId, mode)` der einzige Lookup, den Anzeigeflächen benutzen
+(Spektrum, Δ-Achsen, Mode-Tabelle + CSV, 2D-IR).
+
+* **Ein Referenzlog pro Isomer**, Default das kleinste `jobInfo.scrfEps` (Gasphase = 1).
+  Alle anderen Logs desselben Isomers werden **sternförmig** dagegen gematcht, nie
+  verkettet. Über Isomere hinweg wird nie gematcht — Isomere kommen aus dem
+  Metadaten-Tagging (`_metaFor().isomer`); ohne Isomer-Tag gibt es keine Band-IDs.
+* **`_assignFamily` maximiert nicht die Ähnlichkeitssumme.** Das ist der Punkt, an dem
+  die naheliegende Implementierung scheitert: ein Lösungsmittelwechsel verschiebt eine
+  Bandfamilie annähernd **starr**, und „größte Ähnlichkeit" heißt bei Gaussians weichem
+  Frequenzterm (σ = 130) faktisch „kleinste Frequenzdifferenz". Damit paart man eine
+  CO-Bande mit ihrem 7 cm⁻¹ entfernten Nachbarn statt mit ihrem 40 cm⁻¹ entfernten
+  echten Partner und nummeriert den Block um — exakt der Fehler, den greedy `matchModes`
+  macht (dort: alle 6 CO/CN-Banden falsch, Scores 0.93–1.00). Stattdessen werden alle
+  ordnungserhaltenden Zuordnungen aufgezählt und gewertet nach: **meiste Banden → kleinste
+  Streuung der Frequenzverschiebung → höchste Ähnlichkeitssumme**. Bei gleicher Bandenzahl
+  reduziert sich das auf Rangzuordnung, was hier das Richtige ist.
+* **Kein Erzwingen.** Paare unter `bands.minScore` (Default 0.35) sind verboten; findet
+  eine Bande keinen Kandidaten, bleibt sie unbesetzt und steht in „Zuordnungen prüfen".
+  Ampel: grün ≥ 0.75, gelb 0.5–0.75, rot darunter.
+* **Manuelle Entscheidungen** (`bands.overrides[logId][bandId]`) schlagen die Automatik;
+  `null` heißt „bewusst nicht zugeordnet" und ist von einer Auto-Lücke unterscheidbar.
+  Sie hängen an der Log-ID, überleben also Session-Roundtrips, aber nicht das erneute
+  Einlesen derselben Datei als neues Log.
+
+`matchModes` bleibt bestehen — Struktur-Overlay und Experimental-Peak-Abgleich benutzen
+es weiter. Für das Diagnosefenster ist es nicht mehr die Zuordnungsquelle.
+
 ### Resonanzen (VPT2)
 
 `analyzeLog` hängt `resonances` an; fehlt der Block, ist das Feld `null` — kein Fehler.
@@ -438,8 +475,10 @@ mit identischen Parametern analysiert sein.
 
 ## 7. Stand des Repos
 
-Das eingecheckte `src/index.html` ist **v1.0.5** plus zwei Features:
+Das eingecheckte `src/index.html` ist **v1.0.5** plus drei Features:
 Metadaten-/Grid-Ansicht (`meta`-State, `scrfKind` im Parser) und Resonanz-Analyse
 (`parseResonances`, `resonances`/`freqAnharmDepert` in `analyzeLog`,
-Compare→Resonanzen, Schraffur in der Δ-Matrix). Der Parser weicht damit von der
+Compare→Resonanzen, Schraffur in der Δ-Matrix) und persistente Band-IDs
+(`bands`-State, `scrfEps` im Parser, Compare→Zuordnungen, Band-IDs in Spektrum,
+Δ-Achsen, Mode-Tabelle/CSV und 2D-IR). Der Parser weicht damit von der
 ausgelieferten `AMAV1.0.5.html` ab — additiv, alle bestehenden Felder unverändert.
