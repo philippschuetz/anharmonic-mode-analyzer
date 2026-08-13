@@ -36,6 +36,8 @@ Eingebettete Assets (alle gzip+base64 im Manifest, keine externen Requests):
 | dc-runtime (`support.js`) | 69 KB | Template-Compiler + `DCLogic`-Basisklasse; generiert, nicht von Hand editieren |
 | `gaussian-parser.js` | 56 KB | **`window.GaussianAnalyzer`** — Parsing + gesamte Analyse |
 | `gif-encoder.js` | 6 KB | `window.AMGif`, dependency-freier GIF89a/LZW-Encoder für Animations-Export |
+| Recharts 2.15.4 (UMD) + prop-types | 493 KB | Diagrammbibliothek, **nur** für den Trends-Tab; wird erst beim Öffnen geladen |
+| `trend-plot.js` | 14 KB | `window.AMTrendPlot` — React-Komponente des Trends-Tabs |
 
 React wird über `window.__resources` auf die Blob-URL umgebogen (`cdn.ts` im
 dc-runtime). Die unpkg-URLs im CSP-Header sind reiner Fallback für gehostete
@@ -100,6 +102,7 @@ Zeilennummern sind im JSON-String nutzlos):
 | Metadaten-Tagging | `_deriveMeta`, `_metaFor`, `_metaRe`, `_canonSolvent`, `_canonModel`, `_metaConflictText`, `SOLVENT_ALIASES`, `META_PATTERN_DEFAULT` |
 | Grid-Ansicht | `_gridData`, `_cellKey`, `gridCellClick`, `_setCompareSel`, `_selectedIds`, `setGridModel` |
 | Resonanzen | `_resonanceTable`, `_bandKeyMaps`, `_resLogs`, `_resFreq`, `RES_TYPE_ORDER` |
+| Band-IDs | `_bandRegistry`, `_assignFamily`, `_seedBandIds`, `_refLogFor`, `_isomerGroups`, `_bandIdFor`, `_bandIdForAnh`, `_bandReviewRows`, `setBandOverride`, `renameBand` |
 | Sessions | `_serializeSession`, `_applySession`, `saveSession`, `loadSession`, `_openDB` |
 | Gruppen & Serien | `createGroupFromLog`, `_buildSeriesAnalysis`, `_buildSeriesOpt`, `_refreshSeriesSuggestion`, `_seriesIssues` |
 | Tabs / Split | `tabIdsFor`, `PANEB_TABS`, `paneTabIds`, `setPaneTab`, `drawPane` |
@@ -108,6 +111,9 @@ Zeilennummern sind im JSON-String nutzlos):
 | Canvas-Plots | `drawSpectrum`, `drawDelta`, `drawCross`, `drawPR`, `drawCompare`, `drawOptChart`, `drawScanProfile`, `drawOrbitalDiagram`, `drawEnergyChart`, `drawCmpContext` |
 | Observation Frames | `setObsFrames`, `commitObsFrame`, `effDeltaWindow`, `obsFreqAt` |
 | Export | `exportImage`, `_exportCanvasPng`, `_exportCsvFor`, `_saveBlob`, `_estGifSize` |
+| CSV-Gesamtexport | `exportAllCsv`, `buildBandsCsv`, `buildCouplingsCsv`, `buildMetadataCsv`, `_exportContext`, `_csvNum`, `SOLVENT_DESCRIPTORS` |
+| Tidy-Datenpfad | `tidyBandRows`, `BANDS_COLUMNS`, `_exportInFrames` |
+| Trends-Tab | `ASSET_RECHARTS`, `_ensureTrendLibs`, `_loadScriptOnce`, `setTrendEl`, `_mountTrend`, `_trendProps`, `_isomerColors` |
 | i18n | `_buildStrings` (en/de), `t(key)` |
 | Theming | `ACCENTS`, `APPEARANCES`, `applyTheme`, `persistPrefs` |
 
@@ -244,16 +250,25 @@ manuell im Browser:
    ⚠ Die Auswahl in `compare.sel` ist **opt-out** (`sel[id] !== false`) — wer
    sie programmatisch setzt, muss die Map vollständig schreiben
    (`_setCompareSel`), sonst bleiben ungenannte Logs ausgewählt.
-6. Resonanzen: Log ohne Resonanzblock (harmonisch oder VPT2 ohne Treffer) muss
+6. Trends-Tab: ohne Band-IDs muss der Tab leer, nicht kaputt sein; beim ersten
+   Öffnen darf **kein** Netzwerk-Request entstehen (Playwright: alle Requests
+   außer `file:`/`blob:`/`data:` zählen); y-Größe, Sortierung, Modell-Umschalter
+   und Isomer-Checkboxen dürfen nicht werfen.
+7. Band-IDs: Referenzwechsel muss alle Zuordnungen neu rechnen; ein Log ohne
+   Isomer-Tag darf keine IDs bekommen und muss in der Prüfansicht genannt werden;
+   eine im Ziel-Log fehlende Bande muss eine **Lücke** erzeugen und darf den Rest
+   des Blocks nicht verschieben (Regressionstest: eine CO-Bande aus dem Ziel-Log
+   entfernen, die übrigen fünf müssen ihre Zuordnung behalten).
+8. Resonanzen: Log ohne Resonanzblock (harmonisch oder VPT2 ohne Treffer) muss
    `resonances === null` liefern und die Ansicht leer, nicht kaputt, zeigen.
    Gegenprobe für den Parser: die geparsten Zeilenzahlen müssen Gaussians eigenen
    Zählern entsprechen (`N Active Fermi resonances over N` usw.) — das ist der
    billigste Vollständigkeitstest, den es gibt.
-7. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
+9. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
    Export file), Datei neu laden, Session importieren — die Werte müssen
    identisch reproduziert werden. Das testet gleichzeitig den Rohtext-Vertrag
    aus §3.5.
-8. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
+10. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
    schnellste Art, unbeabsichtigte Analyse-Änderungen zu sehen.
 
 ### Wie echte Referenzlogs aussehen
@@ -336,7 +351,7 @@ mit Δᵢᵢ = 2νᵢ − ν₂ᵢ auf der Diagonale und Δᵢⱼ = νᵢ + ν�
 | `parseOvertones(text)` | | `{anhMode: E_anharm}` oder `null` |
 | `parseCombinationBands(text)` | | `[{i, j, Eanharm}]` oder `null` |
 | `parseEnergies(text)` | | `{method, scf, zpeCorr, enthalpyCorr, gibbsCorr, eZPE, eThermal, enthalpy, gibbs, charge, mult, temperature, pressure, hasThermo}`, alles in Hartree |
-| `parseJobInfo(text)` | | `{route, title, charge, mult, chk, mem, nproc, method, basis, theoryArchive, basisArchive, formula, jobType, isRestart, hasOpt, hasFreq, optCriteria, dispersion, hasScrf, scrfModel, scrfKind, solventName, terminated:"normal"\|"error"\|"incomplete", normalCount, errorLine, errorReason, cpuSeconds, wallSeconds, hasAny}` |
+| `parseJobInfo(text)` | | `{route, title, charge, mult, chk, mem, nproc, method, basis, theoryArchive, basisArchive, formula, jobType, isRestart, hasOpt, hasFreq, optCriteria, intGrid, scfConv, dispersion, hasScrf, scrfModel, scrfKind, scrfEps, scrfEpsInf, solventName, terminated:"normal"\|"error"\|"incomplete", normalCount, errorLine, errorReason, cpuSeconds, wallSeconds, hasAny}` |
 | `parseOptimization(text)` | | `{steps, completed, stopped, nAtoms, atnums, perStepCharges}` oder `null`; `steps[] = {n, geom, geomIdx, energy, charges, maxForce, rmsForce, maxDisp, rmsDisp, predDE, converged}`, jedes Kriterium `{val, thr, conv}` |
 | `parseScan(text)` | | `{points:[{n, geom, energy, coord?}], coordName, nAtoms, atnums}` oder `null`; braucht ≥2 Punkte |
 | `parseOrbitals(text)` | | `{restricted, hartreeToEv, alpha:{occ,virt,homo,lumo,gap,nOcc,nVirt}, beta?, homo, lumo, gap}` oder `null`; letzter zusammenhängender Eigenvalue-Block, Werte per Signed-Float-Regex (Gaussian klebt sie zusammen) |
@@ -394,6 +409,76 @@ Serien-Merge in der UI).
 die UI übergibt aber immer **0.15** (`state.params`). Effektiv gilt 0.15; wer
 den Parser standalone aufruft, bekommt 0.22. Beim Ändern beide Stellen anfassen.
 
+### Trends-Tab (Recharts)
+
+Der einzige Teil der App, der **nicht** auf Canvas zeichnet. `trend-plot.js` ist eine
+React-Komponente (`window.AMTrendPlot`), die Recharts benutzt.
+
+* **Recharts wird lazy geladen.** Die drei Assets (`prop-types`, `recharts`,
+  `trend-plot`) hängen im Manifest unter festen UUIDs, die im App-Code als
+  `ASSET_*`-Konstanten stehen; der Loader ersetzt sie beim Entpacken durch Blob-URLs.
+  `_ensureTrendLibs()` hängt sie beim ersten Öffnen des Tabs als `<script>` an —
+  nicht ins `<head>`, weil dort nicht garantiert ist, dass React schon da ist, und
+  weil ~500 KB Diagrammcode sonst jeden Start belasten. Der CSP erlaubt `blob:`.
+* **Kein JSX.** Die Komponente ist mit `React.createElement` geschrieben; ein
+  JSX-Schritt würde Babel von unpkg nachladen (§3.2/§3.3).
+* **Kein zweiter Datenpfad.** Die Komponente bekommt `tidyBandRows()` — dieselbe
+  Funktion, die `bands.csv` erzeugt. Eine Spalte bedeutet auf dem Bildschirm
+  dasselbe wie im Export. Der Tab folgt immer den Observation Frames
+  (`framesOnly: true`), unabhängig vom Häkchen im Export-Dialog.
+* Die Komponente ist eigenständig: sie braucht nur `window.React` und
+  `window.Recharts` und hat keine AMA-Abhängigkeit. Einziges Pflicht-Prop ist
+  `data` im Format von `bands.csv`.
+
+### CSV-Gesamtexport (`⤓ CSV` in der Kopfleiste)
+
+Drei Long-Format-Dateien für pandas: `bands.csv` (Log × Fundamentale),
+`couplings.csv` (Log × Modenpaar), `metadata.csv` (Log). Konventionen, die
+nicht verhandelbar sind, weil die Auswertung daran hängt:
+
+* **Fehlender Wert = leeres Feld.** Nie `0`, nie `"NaN"`. `pd.read_csv` liefert
+  dann `NaN`, und eine fehlende Anharmonizität ist von einer echten Null
+  unterscheidbar. `_csvNum` setzt das durch.
+* `resonance_flag` ist `1`/`0` nur, wenn das Log überhaupt einen Resonanzblock
+  hat; sonst **leer** (unbekannt, nicht „keine Resonanz").
+* Solvensdeskriptoren (`eps`, `n`, `alpha`, `beta`) kommen aus
+  `SOLVENT_DESCRIPTORS` (SMD-Parametrisierung), nicht aus dem Log — Gaussian
+  druckt nur Eps. Ist das Lösungsmittel nicht in der Tabelle, fällt `eps` auf
+  `jobInfo.scrfEps` zurück, `n`/`alpha`/`beta` bleiben leer.
+* Drei Dateien = drei Downloads, um 250 ms versetzt (Browser drosseln schnelle
+  Folgedownloads). Kein ZIP, weil das eine Bibliothek bräuchte.
+
+### Band-IDs (Zuordnung über eine Serie)
+
+Ersetzt paarweises `matchModes` im Diagnosefenster. `_bandRegistry()` ist die einzige
+Quelle; `_bandIdFor(logId, mode)` der einzige Lookup, den Anzeigeflächen benutzen
+(Spektrum, Δ-Achsen, Mode-Tabelle + CSV, 2D-IR).
+
+* **Ein Referenzlog pro Isomer**, Default das kleinste `jobInfo.scrfEps` (Gasphase = 1).
+  Alle anderen Logs desselben Isomers werden **sternförmig** dagegen gematcht, nie
+  verkettet. Über Isomere hinweg wird nie gematcht — Isomere kommen aus dem
+  Metadaten-Tagging (`_metaFor().isomer`); ohne Isomer-Tag gibt es keine Band-IDs.
+* **`_assignFamily` maximiert nicht die Ähnlichkeitssumme.** Das ist der Punkt, an dem
+  die naheliegende Implementierung scheitert: ein Lösungsmittelwechsel verschiebt eine
+  Bandfamilie annähernd **starr**, und „größte Ähnlichkeit" heißt bei Gaussians weichem
+  Frequenzterm (σ = 130) faktisch „kleinste Frequenzdifferenz". Damit paart man eine
+  CO-Bande mit ihrem 7 cm⁻¹ entfernten Nachbarn statt mit ihrem 40 cm⁻¹ entfernten
+  echten Partner und nummeriert den Block um — exakt der Fehler, den greedy `matchModes`
+  macht (dort: alle 6 CO/CN-Banden falsch, Scores 0.93–1.00). Stattdessen werden alle
+  ordnungserhaltenden Zuordnungen aufgezählt und gewertet nach: **meiste Banden → kleinste
+  Streuung der Frequenzverschiebung → höchste Ähnlichkeitssumme**. Bei gleicher Bandenzahl
+  reduziert sich das auf Rangzuordnung, was hier das Richtige ist.
+* **Kein Erzwingen.** Paare unter `bands.minScore` (Default 0.35) sind verboten; findet
+  eine Bande keinen Kandidaten, bleibt sie unbesetzt und steht in „Zuordnungen prüfen".
+  Ampel: grün ≥ 0.75, gelb 0.5–0.75, rot darunter.
+* **Manuelle Entscheidungen** (`bands.overrides[logId][bandId]`) schlagen die Automatik;
+  `null` heißt „bewusst nicht zugeordnet" und ist von einer Auto-Lücke unterscheidbar.
+  Sie hängen an der Log-ID, überleben also Session-Roundtrips, aber nicht das erneute
+  Einlesen derselben Datei als neues Log.
+
+`matchModes` bleibt bestehen — Struktur-Overlay und Experimental-Peak-Abgleich benutzen
+es weiter. Für das Diagnosefenster ist es nicht mehr die Zuordnungsquelle.
+
 ### Resonanzen (VPT2)
 
 `analyzeLog` hängt `resonances` an; fehlt der Block, ist das Feld `null` — kein Fehler.
@@ -438,8 +523,11 @@ mit identischen Parametern analysiert sein.
 
 ## 7. Stand des Repos
 
-Das eingecheckte `src/index.html` ist **v1.0.5** plus zwei Features:
+Das eingecheckte `src/index.html` ist **v1.0.5** plus fünf Features:
 Metadaten-/Grid-Ansicht (`meta`-State, `scrfKind` im Parser) und Resonanz-Analyse
 (`parseResonances`, `resonances`/`freqAnharmDepert` in `analyzeLog`,
-Compare→Resonanzen, Schraffur in der Δ-Matrix). Der Parser weicht damit von der
+Compare→Resonanzen, Schraffur in der Δ-Matrix) und persistente Band-IDs
+(`bands`-State, `scrfEps` im Parser, Compare→Zuordnungen, Band-IDs in Spektrum,
+Δ-Achsen, Mode-Tabelle/CSV und 2D-IR), CSV-Gesamtexport und der Trends-Tab
+(Recharts, lazy). Der Parser weicht damit von der
 ausgelieferten `AMAV1.0.5.html` ab — additiv, alle bestehenden Felder unverändert.
