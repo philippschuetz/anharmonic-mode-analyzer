@@ -36,6 +36,8 @@ Eingebettete Assets (alle gzip+base64 im Manifest, keine externen Requests):
 | dc-runtime (`support.js`) | 69 KB | Template-Compiler + `DCLogic`-Basisklasse; generiert, nicht von Hand editieren |
 | `gaussian-parser.js` | 56 KB | **`window.GaussianAnalyzer`** — Parsing + gesamte Analyse |
 | `gif-encoder.js` | 6 KB | `window.AMGif`, dependency-freier GIF89a/LZW-Encoder für Animations-Export |
+| Recharts 2.15.4 (UMD) + prop-types | 493 KB | Diagrammbibliothek, **nur** für den Trends-Tab; wird erst beim Öffnen geladen |
+| `trend-plot.js` | 14 KB | `window.AMTrendPlot` — React-Komponente des Trends-Tabs |
 
 React wird über `window.__resources` auf die Blob-URL umgebogen (`cdn.ts` im
 dc-runtime). Die unpkg-URLs im CSP-Header sind reiner Fallback für gehostete
@@ -110,6 +112,8 @@ Zeilennummern sind im JSON-String nutzlos):
 | Observation Frames | `setObsFrames`, `commitObsFrame`, `effDeltaWindow`, `obsFreqAt` |
 | Export | `exportImage`, `_exportCanvasPng`, `_exportCsvFor`, `_saveBlob`, `_estGifSize` |
 | CSV-Gesamtexport | `exportAllCsv`, `buildBandsCsv`, `buildCouplingsCsv`, `buildMetadataCsv`, `_exportContext`, `_csvNum`, `SOLVENT_DESCRIPTORS` |
+| Tidy-Datenpfad | `tidyBandRows`, `BANDS_COLUMNS`, `_exportInFrames` |
+| Trends-Tab | `ASSET_RECHARTS`, `_ensureTrendLibs`, `_loadScriptOnce`, `setTrendEl`, `_mountTrend`, `_trendProps`, `_isomerColors` |
 | i18n | `_buildStrings` (en/de), `t(key)` |
 | Theming | `ACCENTS`, `APPEARANCES`, `applyTheme`, `persistPrefs` |
 
@@ -246,21 +250,25 @@ manuell im Browser:
    ⚠ Die Auswahl in `compare.sel` ist **opt-out** (`sel[id] !== false`) — wer
    sie programmatisch setzt, muss die Map vollständig schreiben
    (`_setCompareSel`), sonst bleiben ungenannte Logs ausgewählt.
-6. Band-IDs: Referenzwechsel muss alle Zuordnungen neu rechnen; ein Log ohne
+6. Trends-Tab: ohne Band-IDs muss der Tab leer, nicht kaputt sein; beim ersten
+   Öffnen darf **kein** Netzwerk-Request entstehen (Playwright: alle Requests
+   außer `file:`/`blob:`/`data:` zählen); y-Größe, Sortierung, Modell-Umschalter
+   und Isomer-Checkboxen dürfen nicht werfen.
+7. Band-IDs: Referenzwechsel muss alle Zuordnungen neu rechnen; ein Log ohne
    Isomer-Tag darf keine IDs bekommen und muss in der Prüfansicht genannt werden;
    eine im Ziel-Log fehlende Bande muss eine **Lücke** erzeugen und darf den Rest
    des Blocks nicht verschieben (Regressionstest: eine CO-Bande aus dem Ziel-Log
    entfernen, die übrigen fünf müssen ihre Zuordnung behalten).
-7. Resonanzen: Log ohne Resonanzblock (harmonisch oder VPT2 ohne Treffer) muss
+8. Resonanzen: Log ohne Resonanzblock (harmonisch oder VPT2 ohne Treffer) muss
    `resonances === null` liefern und die Ansicht leer, nicht kaputt, zeigen.
    Gegenprobe für den Parser: die geparsten Zeilenzahlen müssen Gaussians eigenen
    Zählern entsprechen (`N Active Fermi resonances over N` usw.) — das ist der
    billigste Vollständigkeitstest, den es gibt.
-8. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
+9. Regressionscheck nach Parser-Änderungen: Session speichern (Sessions →
    Export file), Datei neu laden, Session importieren — die Werte müssen
    identisch reproduziert werden. Das testet gleichzeitig den Rohtext-Vertrag
    aus §3.5.
-9. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
+10. Mode-Table als CSV exportieren und mit dem vorherigen Export diffen — die
    schnellste Art, unbeabsichtigte Analyse-Änderungen zu sehen.
 
 ### Wie echte Referenzlogs aussehen
@@ -401,6 +409,27 @@ Serien-Merge in der UI).
 die UI übergibt aber immer **0.15** (`state.params`). Effektiv gilt 0.15; wer
 den Parser standalone aufruft, bekommt 0.22. Beim Ändern beide Stellen anfassen.
 
+### Trends-Tab (Recharts)
+
+Der einzige Teil der App, der **nicht** auf Canvas zeichnet. `trend-plot.js` ist eine
+React-Komponente (`window.AMTrendPlot`), die Recharts benutzt.
+
+* **Recharts wird lazy geladen.** Die drei Assets (`prop-types`, `recharts`,
+  `trend-plot`) hängen im Manifest unter festen UUIDs, die im App-Code als
+  `ASSET_*`-Konstanten stehen; der Loader ersetzt sie beim Entpacken durch Blob-URLs.
+  `_ensureTrendLibs()` hängt sie beim ersten Öffnen des Tabs als `<script>` an —
+  nicht ins `<head>`, weil dort nicht garantiert ist, dass React schon da ist, und
+  weil ~500 KB Diagrammcode sonst jeden Start belasten. Der CSP erlaubt `blob:`.
+* **Kein JSX.** Die Komponente ist mit `React.createElement` geschrieben; ein
+  JSX-Schritt würde Babel von unpkg nachladen (§3.2/§3.3).
+* **Kein zweiter Datenpfad.** Die Komponente bekommt `tidyBandRows()` — dieselbe
+  Funktion, die `bands.csv` erzeugt. Eine Spalte bedeutet auf dem Bildschirm
+  dasselbe wie im Export. Der Tab folgt immer den Observation Frames
+  (`framesOnly: true`), unabhängig vom Häkchen im Export-Dialog.
+* Die Komponente ist eigenständig: sie braucht nur `window.React` und
+  `window.Recharts` und hat keine AMA-Abhängigkeit. Einziges Pflicht-Prop ist
+  `data` im Format von `bands.csv`.
+
 ### CSV-Gesamtexport (`⤓ CSV` in der Kopfleiste)
 
 Drei Long-Format-Dateien für pandas: `bands.csv` (Log × Fundamentale),
@@ -494,10 +523,11 @@ mit identischen Parametern analysiert sein.
 
 ## 7. Stand des Repos
 
-Das eingecheckte `src/index.html` ist **v1.0.5** plus drei Features:
+Das eingecheckte `src/index.html` ist **v1.0.5** plus fünf Features:
 Metadaten-/Grid-Ansicht (`meta`-State, `scrfKind` im Parser) und Resonanz-Analyse
 (`parseResonances`, `resonances`/`freqAnharmDepert` in `analyzeLog`,
 Compare→Resonanzen, Schraffur in der Δ-Matrix) und persistente Band-IDs
 (`bands`-State, `scrfEps` im Parser, Compare→Zuordnungen, Band-IDs in Spektrum,
-Δ-Achsen, Mode-Tabelle/CSV und 2D-IR). Der Parser weicht damit von der
+Δ-Achsen, Mode-Tabelle/CSV und 2D-IR), CSV-Gesamtexport und der Trends-Tab
+(Recharts, lazy). Der Parser weicht damit von der
 ausgelieferten `AMAV1.0.5.html` ab — additiv, alle bestehenden Felder unverändert.
