@@ -109,6 +109,7 @@ Zeilennummern sind im JSON-String nutzlos):
 | Canvas-Plots | `drawSpectrum`, `drawDelta`, `drawCross`, `drawPR`, `drawCompare`, `drawOptChart`, `drawScanProfile`, `drawOrbitalDiagram`, `drawEnergyChart`, `drawCmpContext` |
 | Observation Frames | `setObsFrames`, `commitObsFrame`, `effDeltaWindow`, `obsFreqAt` |
 | Export | `exportImage`, `_exportCanvasPng`, `_exportCsvFor`, `_saveBlob`, `_estGifSize` |
+| CSV-Gesamtexport | `exportAllCsv`, `buildBandsCsv`, `buildCouplingsCsv`, `buildMetadataCsv`, `_exportContext`, `_csvNum`, `SOLVENT_DESCRIPTORS` |
 | i18n | `_buildStrings` (en/de), `t(key)` |
 | Theming | `ACCENTS`, `APPEARANCES`, `applyTheme`, `persistPrefs` |
 
@@ -342,7 +343,7 @@ mit Δᵢᵢ = 2νᵢ − ν₂ᵢ auf der Diagonale und Δᵢⱼ = νᵢ + ν�
 | `parseOvertones(text)` | | `{anhMode: E_anharm}` oder `null` |
 | `parseCombinationBands(text)` | | `[{i, j, Eanharm}]` oder `null` |
 | `parseEnergies(text)` | | `{method, scf, zpeCorr, enthalpyCorr, gibbsCorr, eZPE, eThermal, enthalpy, gibbs, charge, mult, temperature, pressure, hasThermo}`, alles in Hartree |
-| `parseJobInfo(text)` | | `{route, title, charge, mult, chk, mem, nproc, method, basis, theoryArchive, basisArchive, formula, jobType, isRestart, hasOpt, hasFreq, optCriteria, dispersion, hasScrf, scrfModel, scrfKind, scrfEps, scrfEpsInf, solventName, terminated:"normal"\|"error"\|"incomplete", normalCount, errorLine, errorReason, cpuSeconds, wallSeconds, hasAny}` |
+| `parseJobInfo(text)` | | `{route, title, charge, mult, chk, mem, nproc, method, basis, theoryArchive, basisArchive, formula, jobType, isRestart, hasOpt, hasFreq, optCriteria, intGrid, scfConv, dispersion, hasScrf, scrfModel, scrfKind, scrfEps, scrfEpsInf, solventName, terminated:"normal"\|"error"\|"incomplete", normalCount, errorLine, errorReason, cpuSeconds, wallSeconds, hasAny}` |
 | `parseOptimization(text)` | | `{steps, completed, stopped, nAtoms, atnums, perStepCharges}` oder `null`; `steps[] = {n, geom, geomIdx, energy, charges, maxForce, rmsForce, maxDisp, rmsDisp, predDE, converged}`, jedes Kriterium `{val, thr, conv}` |
 | `parseScan(text)` | | `{points:[{n, geom, energy, coord?}], coordName, nAtoms, atnums}` oder `null`; braucht ≥2 Punkte |
 | `parseOrbitals(text)` | | `{restricted, hartreeToEv, alpha:{occ,virt,homo,lumo,gap,nOcc,nVirt}, beta?, homo, lumo, gap}` oder `null`; letzter zusammenhängender Eigenvalue-Block, Werte per Signed-Float-Regex (Gaussian klebt sie zusammen) |
@@ -399,6 +400,24 @@ Serien-Merge in der UI).
 ⚠️ Der eingebaute Default von `internalFracMin` in `analyzeLog` ist **0.22**,
 die UI übergibt aber immer **0.15** (`state.params`). Effektiv gilt 0.15; wer
 den Parser standalone aufruft, bekommt 0.22. Beim Ändern beide Stellen anfassen.
+
+### CSV-Gesamtexport (`⤓ CSV` in der Kopfleiste)
+
+Drei Long-Format-Dateien für pandas: `bands.csv` (Log × Fundamentale),
+`couplings.csv` (Log × Modenpaar), `metadata.csv` (Log). Konventionen, die
+nicht verhandelbar sind, weil die Auswertung daran hängt:
+
+* **Fehlender Wert = leeres Feld.** Nie `0`, nie `"NaN"`. `pd.read_csv` liefert
+  dann `NaN`, und eine fehlende Anharmonizität ist von einer echten Null
+  unterscheidbar. `_csvNum` setzt das durch.
+* `resonance_flag` ist `1`/`0` nur, wenn das Log überhaupt einen Resonanzblock
+  hat; sonst **leer** (unbekannt, nicht „keine Resonanz").
+* Solvensdeskriptoren (`eps`, `n`, `alpha`, `beta`) kommen aus
+  `SOLVENT_DESCRIPTORS` (SMD-Parametrisierung), nicht aus dem Log — Gaussian
+  druckt nur Eps. Ist das Lösungsmittel nicht in der Tabelle, fällt `eps` auf
+  `jobInfo.scrfEps` zurück, `n`/`alpha`/`beta` bleiben leer.
+* Drei Dateien = drei Downloads, um 250 ms versetzt (Browser drosseln schnelle
+  Folgedownloads). Kein ZIP, weil das eine Bibliothek bräuchte.
 
 ### Band-IDs (Zuordnung über eine Serie)
 
