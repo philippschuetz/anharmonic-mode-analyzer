@@ -432,8 +432,21 @@ React-Komponente (`window.AMTrendPlot`), die Recharts benutzt.
   `tidyCouplingRows()` — dieselben Funktionen, die `bands.csv` und `couplings.csv`
   erzeugen. Δij braucht eine Partnerbande; die Facette der Partnerbande entfällt dann.
 * **PCM und SMD gleichzeitig.** Modelle sind mehrfach wählbar (Shift-Klick isoliert);
-  unterschieden wird doppelt — Strichelung der Linie **und** Punktform (Kreis / Quadrat /
-  Dreieck), damit die Isomerfarbe frei bleibt.
+  unterschieden wird dreifach — **Farbschattierung** (`shadeFor`), Strichelung der Linie
+  und Punktform (Kreis / Quadrat / Dreieck).
+  `shadeFor(hex, idx, n)` dreht den Farbton um ±12° und rampt die Helligkeit um ±0.13,
+  wie es der Compare-Tab für Logs einer Gruppe macht: ein Isomer bleibt an seinem
+  Farbton erkennbar, PCM und SMD sind trotzdem auseinanderzuhalten. Die Basishelligkeit
+  wird vorher auf [0.42, 0.60] geklemmt — sonst läuft ein ohnehin helles Isomer gegen
+  die obere Grenze und beide Modelle bekämen dieselbe Schattierung. Steht im Datensatz
+  nur **ein** Modell (`allModels.length <= 1`), bleibt die reine Isomerfarbe stehen.
+* **Eigene Legende, nicht die von Recharts.** Die Reihen zeichnen ihre Punkte über
+  `dotRenderer` und haben deshalb `stroke: "none"`; Recharts' Standardlegende (und ihr
+  Tooltip-Farbfeld) bliebe damit farblos. `legendContent()` rendert stattdessen je Reihe
+  `seriesMark()` — eine SVG-Linie mit der echten Strichelung plus den echten Punkt —
+  vor dem Namen. Dieselben Marker stehen vor den R²-Einträgen; der Tooltip holt seine
+  Farbe aus `colorByKey`. Wer an Farben, Strichelung oder Punktform etwas ändert, muss
+  alle drei Stellen anfassen, sonst driften Plot und Legende auseinander.
 * **Absolut oder relativ.** Relativ subtrahiert je (Isomer, Modell, Bande) den Wert am
   Referenzpunkt — Gasphase oder erster x-Punkt. Fehlt die Referenz, wird die Reihe
   weggelassen statt auf null gesetzt.
