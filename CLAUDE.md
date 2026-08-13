@@ -112,7 +112,7 @@ Zeilennummern sind im JSON-String nutzlos):
 | Observation Frames | `setObsFrames`, `commitObsFrame`, `effDeltaWindow`, `obsFreqAt` |
 | Export | `exportImage`, `_exportCanvasPng`, `_exportCsvFor`, `_saveBlob`, `_estGifSize` |
 | CSV-Gesamtexport | `exportAllCsv`, `buildBandsCsv`, `buildCouplingsCsv`, `buildMetadataCsv`, `_exportContext`, `_csvNum`, `SOLVENT_DESCRIPTORS` |
-| Tidy-Datenpfad | `tidyBandRows`, `BANDS_COLUMNS`, `_exportInFrames` |
+| Tidy-Datenpfad | `tidyBandRows`, `BANDS_COLUMNS`, `tidyCouplingRows`, `COUPLING_COLUMNS`, `_exportInFrames` |
 | Trends-Tab | `ASSET_RECHARTS`, `_ensureTrendLibs`, `_loadScriptOnce`, `setTrendEl`, `_mountTrend`, `_trendProps`, `_isomerColors` |
 | i18n | `_buildStrings` (en/de), `t(key)` |
 | Theming | `ACCENTS`, `APPEARANCES`, `applyTheme`, `persistPrefs` |
@@ -428,12 +428,24 @@ React-Komponente (`window.AMTrendPlot`), die Recharts benutzt.
   Matrizen — es ist die gemeinsame Referenz von PCM und SMD. Im Trends-Tab schaltet
   ein Häkchen den Gaspunkt zu: kategorial als erste Kategorie, auf den kontinuierlichen
   Achsen an seinen echten Vakuumwerten.
+* **Zwei Tidy-Quellen, keine dritte.** Der Tab bekommt `tidyBandRows()` *und*
+  `tidyCouplingRows()` — dieselben Funktionen, die `bands.csv` und `couplings.csv`
+  erzeugen. Δij braucht eine Partnerbande; die Facette der Partnerbande entfällt dann.
+* **PCM und SMD gleichzeitig.** Modelle sind mehrfach wählbar (Shift-Klick isoliert);
+  unterschieden wird doppelt — Strichelung der Linie **und** Punktform (Kreis / Quadrat /
+  Dreieck), damit die Isomerfarbe frei bleibt.
+* **Absolut oder relativ.** Relativ subtrahiert je (Isomer, Modell, Bande) den Wert am
+  Referenzpunkt — Gasphase oder erster x-Punkt. Fehlt die Referenz, wird die Reihe
+  weggelassen statt auf null gesetzt.
 * **x-Achse wahlweise kategorial oder kontinuierlich.** Neben ε, n, α und β stehen die
   abgeleiteten Solvatochromie-Funktionen f(ε) = (ε−1)/(2ε+1), f(n²) und Δf = f(ε) − f(n²)
   zur Verfügung. Die sind gerechnet, nicht tabelliert — es kommen also keine weiteren
   hartkodierten Solvensdaten dazu. Auf kontinuierlichen Achsen kann ein Fit
-  (linear/quadratisch/logarithmisch, kleinste Quadrate in der Komponente) gelegt werden;
-  das R² steht in der Kopfzeile, damit ein schlechter Fit sichtbar bleibt.
+  (linear, quadratisch, kubisch, logarithmisch, reziprok a+b/x — kleinste Quadrate in der
+  Komponente, alle linear in den Koeffizienten) gelegt werden; das R² steht je Reihe in
+  der Isomerfarbe in der Kopfzeile, damit ein schlechter Fit sichtbar bleibt.
+* Auf kontinuierlichen Achsen trägt jeder Tick den Namen der Flüssigkeit über dem
+  Zahlenwert; der Tooltip nennt Farbe, Reihe, Wert und die zugehörige **Logdatei**.
 * **Kein zweiter Datenpfad.** Die Komponente bekommt `tidyBandRows()` — dieselbe
   Funktion, die `bands.csv` erzeugt. Eine Spalte bedeutet auf dem Bildschirm
   dasselbe wie im Export. Der Tab folgt immer den Observation Frames
