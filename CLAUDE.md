@@ -422,6 +422,18 @@ React-Komponente (`window.AMTrendPlot`), die Recharts benutzt.
   weil ~500 KB Diagrammcode sonst jeden Start belasten. Der CSP erlaubt `blob:`.
 * **Kein JSX.** Die Komponente ist mit `React.createElement` geschrieben; ein
   JSX-Schritt würde Babel von unpkg nachladen (§3.2/§3.3).
+* **Gasphase ist kein Solvatationsmodell.** Ein Log ohne SCRF bekommt `modelKey = "GAS"`
+  und die Deskriptoren des Vakuums (ε = 1, n = 1, α = β = 0). Im Grid taucht GAS
+  deshalb **nicht** im Modell-Umschalter auf, sondern als erste Spalte in *beiden*
+  Matrizen — es ist die gemeinsame Referenz von PCM und SMD. Im Trends-Tab schaltet
+  ein Häkchen den Gaspunkt zu: kategorial als erste Kategorie, auf den kontinuierlichen
+  Achsen an seinen echten Vakuumwerten.
+* **x-Achse wahlweise kategorial oder kontinuierlich.** Neben ε, n, α und β stehen die
+  abgeleiteten Solvatochromie-Funktionen f(ε) = (ε−1)/(2ε+1), f(n²) und Δf = f(ε) − f(n²)
+  zur Verfügung. Die sind gerechnet, nicht tabelliert — es kommen also keine weiteren
+  hartkodierten Solvensdaten dazu. Auf kontinuierlichen Achsen kann ein Fit
+  (linear/quadratisch/logarithmisch, kleinste Quadrate in der Komponente) gelegt werden;
+  das R² steht in der Kopfzeile, damit ein schlechter Fit sichtbar bleibt.
 * **Kein zweiter Datenpfad.** Die Komponente bekommt `tidyBandRows()` — dieselbe
   Funktion, die `bands.csv` erzeugt. Eine Spalte bedeutet auf dem Bildschirm
   dasselbe wie im Export. Der Tab folgt immer den Observation Frames
@@ -480,6 +492,13 @@ Quelle; `_bandIdFor(logId, mode)` der einzige Lookup, den Anzeigeflächen benutz
 es weiter. Für das Diagnosefenster ist es nicht mehr die Zuordnungsquelle.
 
 ### Resonanzen (VPT2)
+
+Die Compare-Ansicht zeigt primär **eine Zeile pro Bande** (`_resBandRows`): Spalten sind
+die Logs, die Zelle sagt, ob und wodurch diese Bande resonanzbelastet ist (`○` sauber,
+`F/22/11 ×n` betroffen, `–` Bande hier nicht zugeordnet, `?` Log ohne Resonanzanalyse).
+Zeilen, die sich zwischen den Logs unterscheiden, sind hervorgehoben — das ist der Fall,
+der Anharmonizitäten springen lässt. Gaussians eigene Buchführung (eine Zeile pro
+Resonanz-Eintrag, `_resonanceTable`) liegt darunter, eingeklappt.
 
 `analyzeLog` hängt `resonances` an; fehlt der Block, ist das Feld `null` — kein Fehler.
 Zusätzlich trägt jede Mode `freqAnharmDepert` (deperturbierte Fundamentalfrequenz,
