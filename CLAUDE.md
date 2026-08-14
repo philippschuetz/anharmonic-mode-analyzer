@@ -37,7 +37,7 @@ Eingebettete Assets (alle gzip+base64 im Manifest, keine externen Requests):
 | `gaussian-parser.js` | 56 KB | **`window.GaussianAnalyzer`** — Parsing + gesamte Analyse |
 | `gif-encoder.js` | 6 KB | `window.AMGif`, dependency-freier GIF89a/LZW-Encoder für Animations-Export |
 | Recharts 2.15.4 (UMD) + prop-types | 493 KB | Diagrammbibliothek, **nur** für den Trends-Tab; wird erst beim Öffnen geladen |
-| `trend-plot.js` | 14 KB | `window.AMTrendPlot` — React-Komponente des Trends-Tabs |
+| `trend-plot.js` | 43 KB | `window.AMTrendPlot` — React-Komponente des Trends-Tabs |
 
 React wird über `window.__resources` auf die Blob-URL umgebogen (`cdn.ts` im
 dc-runtime). Die unpkg-URLs im CSP-Header sind reiner Fallback für gehostete
@@ -113,7 +113,7 @@ Zeilennummern sind im JSON-String nutzlos):
 | Export | `exportImage`, `_exportCanvasPng`, `_exportCsvFor`, `_saveBlob`, `_estGifSize` |
 | CSV-Gesamtexport | `exportAllCsv`, `buildBandsCsv`, `buildCouplingsCsv`, `buildMetadataCsv`, `_exportContext`, `_csvNum`, `SOLVENT_DESCRIPTORS` |
 | Tidy-Datenpfad | `tidyBandRows`, `BANDS_COLUMNS`, `tidyCouplingRows`, `COUPLING_COLUMNS`, `_exportInFrames` |
-| Trends-Tab | `ASSET_RECHARTS`, `_ensureTrendLibs`, `_loadScriptOnce`, `setTrendEl`, `_mountTrend`, `_trendProps`, `_isomerColors` |
+| Trends-Tab | `ASSET_RECHARTS`, `_ensureTrendLibs`, `_loadScriptOnce`, `setTrendEl`, `_mountTrend`, `_trendProps`, `_trendView`, `_isomerColors` |
 | i18n | `_buildStrings` (en/de), `t(key)` |
 | Theming | `ACCENTS`, `APPEARANCES`, `applyTheme`, `persistPrefs` |
 
@@ -431,6 +431,20 @@ React-Komponente (`window.AMTrendPlot`), die Recharts benutzt.
 * **Zwei Tidy-Quellen, keine dritte.** Der Tab bekommt `tidyBandRows()` *und*
   `tidyCouplingRows()` — dieselben Funktionen, die `bands.csv` und `couplings.csv`
   erzeugen. Δij braucht eine Partnerbande; die Facette der Partnerbande entfällt dann.
+* **Der Tab bleibt nicht gemountet.** Beim Wegschalten wird die React-Root abgebaut —
+  Recharts und ~500 KB Diagrammcode sollen nicht im Hintergrund leben. Damit die
+  Einstellungen das überleben, meldet die Komponente jede Änderung über
+  `onStateChange`; die App legt sie in `this._trendView` ab und gibt sie beim nächsten
+  Mount als `initial` zurück. Bewusst **kein** React-State: sonst würde jeder Klick in
+  der Steuerspalte die ganze App neu rendern. `_trendView` liegt in der Session
+  (`trendView`); ältere Payloads haben das Feld nicht und starten mit den Defaults.
+* **Hell und dunkel.** Alle Flächen, die keine der sechs Theme-Farben sind, werden aus
+  `theme.panel` abgeleitet (`light = luma(panel) > 0.5`): Select-Hintergrund,
+  Facet-Kacheln, Tooltip. Hartkodierte Overlays wären auf „Tageslicht" unsichtbar.
+  `shadeFor` kennt den Fall ebenfalls — auf Weiß ist Helligkeit die knappe Richtung
+  (ein Gelb mit HSL-l = 0.58 hat Luma 0.8 und verschwindet), deshalb wird die
+  Basisfarbe dort erst auf Luma ≤ 0.52 abgedunkelt und dann in [0.30, 0.42] gehalten,
+  damit der Modellschritt in beide Richtungen Platz hat.
 * **PCM und SMD gleichzeitig.** Modelle sind mehrfach wählbar (Shift-Klick isoliert);
   unterschieden wird dreifach — **Farbschattierung** (`shadeFor`), Strichelung der Linie
   und Punktform (Kreis / Quadrat / Dreieck).
@@ -449,7 +463,10 @@ React-Komponente (`window.AMTrendPlot`), die Recharts benutzt.
   alle drei Stellen anfassen, sonst driften Plot und Legende auseinander.
 * **Absolut oder relativ.** Relativ subtrahiert je (Isomer, Modell, Bande) den Wert am
   Referenzpunkt — Gasphase oder erster x-Punkt. Fehlt die Referenz, wird die Reihe
-  weggelassen statt auf null gesetzt.
+  weggelassen statt auf null gesetzt. Der Gasbezug liest die Gaszeilen **immer** aus
+  `data`, nie aus den gerade gezeichneten Zeilen: das Häkchen entscheidet, was geplottet
+  wird, nicht, wogegen gerechnet wird (sonst zeigt „relativ zur Gasphase" ohne Häkchen
+  nichts).
 * **x-Achse wahlweise kategorial oder kontinuierlich.** Neben ε, n, α und β stehen die
   abgeleiteten Solvatochromie-Funktionen f(ε) = (ε−1)/(2ε+1), f(n²) und Δf = f(ε) − f(n²)
   zur Verfügung. Die sind gerechnet, nicht tabelliert — es kommen also keine weiteren
