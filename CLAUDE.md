@@ -425,9 +425,17 @@ React-Komponente (`window.AMTrendPlot`), die Recharts benutzt.
 * **Gasphase ist kein Solvatationsmodell.** Ein Log ohne SCRF bekommt `modelKey = "GAS"`
   und die Deskriptoren des Vakuums (ε = 1, n = 1, α = β = 0). Im Grid taucht GAS
   deshalb **nicht** im Modell-Umschalter auf, sondern als erste Spalte in *beiden*
-  Matrizen — es ist die gemeinsame Referenz von PCM und SMD. Im Trends-Tab schaltet
-  ein Häkchen den Gaspunkt zu: kategorial als erste Kategorie, auf den kontinuierlichen
-  Achsen an seinen echten Vakuumwerten.
+  Matrizen — es ist die gemeinsame Referenz von PCM und SMD. Im Trends-Tab ist sie
+  **ein Eintrag der Lösungsmittelliste**, der nur ungehakt startet: angehakt erscheint
+  sie kategorial als erste Kategorie, auf den kontinuierlichen Achsen an ihren echten
+  Vakuumwerten.
+* **Jedes Lösungsmittel einzeln abwählbar.** Die Liste ersetzt das frühere
+  „Gasphase einbeziehen"-Häkchen (Klick schaltet um, Shift-Klick isoliert, `all`/`none`);
+  damit lässt sich prüfen, ob eine einzelne Flüssigkeit aus der Reihe tanzt. Der Zustand
+  ist `solvents: []`; `null` heißt „nie angefasst" und löst sich zu *alle Flüssigkeiten,
+  kein Gas* auf — so öffnet auch eine gespeicherte Ansicht von vor diesem Control richtig
+  (der alte `includeGas`-Schlüssel wird dabei noch gelesen). Anders als `compare.sel` ist
+  die Auswahl **opt-in**: leere Liste heißt leer, nicht „alle".
 * **Zwei Tidy-Quellen, keine dritte.** Der Tab bekommt `tidyBandRows()` *und*
   `tidyCouplingRows()` — dieselben Funktionen, die `bands.csv` und `couplings.csv`
   erzeugen. Δij braucht eine Partnerbande; die Facette der Partnerbande entfällt dann.
@@ -447,7 +455,10 @@ React-Komponente (`window.AMTrendPlot`), die Recharts benutzt.
   damit der Modellschritt in beide Richtungen Platz hat.
 * **PCM und SMD gleichzeitig.** Modelle sind mehrfach wählbar (Shift-Klick isoliert);
   unterschieden wird dreifach — **Farbschattierung** (`shadeFor`), Strichelung der Linie
-  und Punktform (Kreis / Quadrat / Dreieck).
+  und Punktform (Kreis / Quadrat / Dreieck). ⚠️ Auf kontinuierlichen x-Achsen zeichnen
+  die Datenreihen **nur Punkte** (`stroke: "none"`); die einzige sichtbare Linie ist die
+  Fitkurve. Sie muss deshalb `dashOf(sk.model)` tragen — mit einer festen Strichelung
+  sehen dort beide Modelle gleich aus.
   `shadeFor(hex, idx, n)` dreht den Farbton um ±12° und rampt die Helligkeit um ±0.13,
   wie es der Compare-Tab für Logs einer Gruppe macht: ein Isomer bleibt an seinem
   Farbton erkennbar, PCM und SMD sind trotzdem auseinanderzuhalten. Die Basishelligkeit
