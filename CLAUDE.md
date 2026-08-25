@@ -103,6 +103,7 @@ Zeilennummern sind im JSON-String nutzlos):
 | Grid-Ansicht | `_gridData`, `_cellKey`, `gridCellClick`, `_setCompareSel`, `_selectedIds`, `setGridModel` |
 | Resonanzen | `_resonanceTable`, `_bandKeyMaps`, `_resLogs`, `_resFreq`, `RES_TYPE_ORDER` |
 | Band-IDs | `_bandRegistry`, `_assignFamily`, `_seedBandIds`, `_refLogFor`, `_isomerGroups`, `_bandIdFor`, `_bandIdForAnh`, `_bandReviewRows`, `setBandOverride`, `renameBand` |
+| Frequenzfenster | `_stretchFamilies`, `_autoBandWindow`, `_bandWindow`, `_bandsOutsideWindow`, `effDeltaWindow`, `onWinNum`, `onWinAuto` |
 | Sessions | `_serializeSession`, `_applySession`, `saveSession`, `loadSession`, `_openDB` |
 | Gruppen & Serien | `createGroupFromLog`, `_buildSeriesAnalysis`, `_buildSeriesOpt`, `_refreshSeriesSuggestion`, `_seriesIssues` |
 | Tabs / Split | `tabIdsFor`, `PANEB_TABS`, `paneTabIds`, `setPaneTab`, `drawPane` |
@@ -519,6 +520,23 @@ Ersetzt paarweises `matchModes` im Diagnosefenster. `_bandRegistry()` ist die ei
 Quelle; `_bandIdFor(logId, mode)` der einzige Lookup, den Anzeigeflächen benutzen
 (Spektrum, Δ-Achsen, Mode-Tabelle + CSV, 2D-IR).
 
+* **Das Bandfenster ist abgeleitet, nicht gesetzt.** Früher fest 1800–2150 — eine
+  Lösungsmittelverschiebung, die eine ν(C-O) unter 1800 drückt (real gemessen:
+  SMD/21/MeOH bei 1789.9 cm⁻¹), nahm ihr damit stillschweigend die Band-ID **und**
+  warf sie aus Δ-Matrix, CSV und Trends. `_autoBandWindow()` misst stattdessen über
+  **alle geladenen Logs** die Streckschwingungen der zweiatomigen Liganden und legt
+  ±25 cm⁻¹ Reserve drauf. Welche Familien das sind, kommt aus `detectLigands`
+  (`_stretchFamilies()`: jede Gruppe mit `size === 2`, die kein Metall ist, plus ihre
+  μ-Form) — kein hartkodiertes „CO, CN", ein Nitrosylkomplex funktioniert genauso.
+  `bands.auto`/`delta.auto` (Default `true`) schalten das ab, sobald jemand eine Grenze
+  eintippt; der `auto`-Knopf gibt es zurück. **Beide Fenster benutzen dieselbe
+  Ableitung** — sonst zeigt der Trend Banden, die die Δ-Matrix nicht kennt.
+  Beobachtungsrahmen schlagen weiterhin alles. Ohne zweiatomige Liganden bleibt es beim
+  gespeicherten Wert. `_bandsOutsideWindow()` listet in „Zuordnungen prüfen" jede
+  Streckschwingung, die das Fenster ausschließt — ein von Hand gesetztes Fenster darf
+  Banden kosten, aber nicht heimlich.
+  ⚠️ Beim Laden alter Sessions gilt: `delta.lo/hi` = 1800/2150 (unberührter Default)
+  → `auto`; alles andere bleibt fixiert (`mergeWin` in `_applySession`).
 * **Ein Referenzlog pro Isomer**, Default das kleinste `jobInfo.scrfEps` (Gasphase = 1).
   Alle anderen Logs desselben Isomers werden **sternförmig** dagegen gematcht, nie
   verkettet. Über Isomere hinweg wird nie gematcht — Isomere kommen aus dem
