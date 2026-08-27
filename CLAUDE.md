@@ -108,6 +108,8 @@ Zeilennummern sind im JSON-String nutzlos):
 | Gruppen & Serien | `createGroupFromLog`, `_buildSeriesAnalysis`, `_buildSeriesOpt`, `_refreshSeriesSuggestion`, `_seriesIssues` |
 | Tabs / Split | `tabIdsFor`, `PANEB_TABS`, `paneTabIds`, `setPaneTab`, `drawPane` |
 | 3D (3Dmol) | `buildViewer`, `refreshMolecule`, `_computeOrient`, `_styleMolecule`, `_renderPhase`, `_hbonds` |
+| 3D-Bühne & Druckfarben | `_viewerBg`, `_viewerLight`, `_forLight`, `_applyViewStyle`, `_inkOverride`, `darkViewer` |
+| Bild-Export | `_dataUriToBlob`, `_savePngUri`, `exportPng`, `_getOffscreen`, `export3d.transparent` |
 | 3D Overlay (Compare→Structures) | `buildOverlayViewer`, `_addOverlayModel`, `refreshOverlay`, `overlayPair` |
 | Canvas-Plots | `drawSpectrum`, `drawDelta`, `drawCross`, `drawPR`, `drawCompare`, `drawOptChart`, `drawScanProfile`, `drawOrbitalDiagram`, `drawEnergyChart`, `drawCmpContext` |
 | Observation Frames | `setObsFrames`, `commitObsFrame`, `effDeltaWindow`, `obsFreqAt` |
@@ -122,10 +124,39 @@ Tab-Sichtbarkeit hängt am Inhalt des Logs — `tabIdsFor(analysis)` ist die
 einzige Quelle der Wahrheit dafür (z. B. `cross` nur bei `a.hasAnharm`,
 `orbitals` nur bei `a.orbitals`).
 
+### 3D-Bühne: dunkel oder hell
+
+`--viewer` folgt seit v1.0.5+ dem Erscheinungsbild — „Tageslicht" gibt eine **weiße**
+Bühne, damit ein exportiertes Molekül ohne Nachbearbeitung in eine gedruckte Arbeit
+passt. Die Preference `darkViewer` erzwingt die dunkle Bühne in jedem Thema.
+
+Weiß ist nicht nur ein anderer Hintergrund: CPK ist gegen Schwarz definiert, Wasserstoff
+ist `#FFFFFF` und verschwindet auf Papier. Deshalb hängt an `_viewerLight()` ein
+kompletter Farbsatz:
+
+* `_forLight(hex)` deckelt die Luminanz (Default 0.74) — H wird hellgrau, bleibt aber
+  als „hell" erkennbar. Gilt für Elementfarben, Ligandenpalette und Metallgrau.
+* `_applyViewStyle(v3)` schaltet 3Dmols `setViewStyle({style:"outline"})` ein. Ohne
+  Kontur laufen helle Kugeln auf Weiß ineinander; auf der dunklen Bühne bleibt sie aus.
+* Dimmen kehrt sich um (`DIM`/`HIDE` werden hell), Atomlabels werden weiß mit dunkler
+  Schrift und dünnem Rand, Auslenkungspfeile und H-Brücken nehmen `accDeep` statt
+  `accBright`.
+
+⚠️ Die Farben stecken im Modell-Style, nicht in einem Overlay: nach einem Themenwechsel
+muss neu gestylt werden (`applyTheme` setzt alle `_sig`-Caches zurück und ruft
+`_applyViewStyle` auf **jedem** lebenden Viewer — es gibt sechs).
+
+**`export3d.transparent`** rendert das Standbild off-screen mit `backgroundAlpha: 0`
+(3Dmol baut seinen Renderer mit `premultipliedAlpha:false` und `preserveDrawingBuffer:true`,
+`pngURI()` liefert damit echtes Alpha). Dabei setzt `_inkOverride = true` die Druckfarben
+**unabhängig vom Thema** — ein Bild ohne Hintergrund landet fast immer auf weißem Papier,
+und dunkle Bühnenfarben wären dort unsichtbar. Der PNG-Export geht über den Offscreen-
+Viewer in der eingestellten Exportgröße, nicht über die Bildschirmfläche.
+
 ### Persistenz
 
 * `localStorage["amaPrefs"]` — nur Preferences (Sprache, Akzent, Appearance,
-  Nav-Richtung, Home-Animation). Nie Logdaten.
+  `darkViewer`, Nav-Richtung, Home-Animation). Nie Logdaten.
 * IndexedDB `amaSessions`, Stores `meta` (Name/Datum/Größe) und `data`
   (Payload). Export als `.amaz.json`-Datei.
 
@@ -141,8 +172,11 @@ einzige Quelle der Wahrheit dafür (z. B. `cross` nur bei `a.hasAnharm`,
    `.github/workflows/build.yml` darf weiterhin nur das Docker-Image bauen.
 3. **Keine externen Requests zur Laufzeit.** Kein `fetch` auf http(s), kein
    XHR, kein WebSocket, keine Web-Fonts, keine CDN-Scripts, kein Telemetrie-
-   Ping. Aktueller Stand: die einzigen zwei `fetch()`-Aufrufe holen `data:`-URIs
-   aus `v3.pngURI()` für den PNG-Export — das ist erlaubt und soll so bleiben.
+   Ping. Aktueller Stand: der App-Code enthält **gar kein** `fetch` mehr; der
+   einzige Aufruf steht im Loader und holt eine `blob:`-URL. `data:`-URIs aus
+   `v3.pngURI()` werden mit `_dataUriToBlob` (atob) umgewandelt — `fetch()` ging
+   dafür nicht, weil `connect-src 'self'` im eigenen CSP `data:` blockt und der
+   Standbild-Export dadurch schlicht nichts geliefert hat.
    Vor dem Commit prüfen:
    ```
    grep -n "XMLHttpRequest\|WebSocket\|sendBeacon\|EventSource\|fetch(\"http\|fetch('http" src/index.html
