@@ -109,6 +109,7 @@ Zeilennummern sind im JSON-String nutzlos):
 | Tabs / Split | `tabIdsFor`, `PANEB_TABS`, `paneTabIds`, `setPaneTab`, `drawPane` |
 | 3D (3Dmol) | `buildViewer`, `refreshMolecule`, `_computeOrient`, `_styleMolecule`, `_renderPhase`, `_hbonds` |
 | 3D-Bühne & Druckfarben | `_viewerBg`, `_viewerLight`, `_forLight`, `_applyViewStyle`, `_inkOverride`, `darkViewer` |
+| Auslenkung & Phase | `_drawArrows`, `ARROW_MAX`, `_arrowStartOffset`, `_drawPhaseMarks`, `PHASE_MIN_AMP`, `_phaseColors`, `view3d.phase` |
 | Bild-Export | `_dataUriToBlob`, `_savePngUri`, `exportPng`, `_getOffscreen`, `export3d.transparent` |
 | 3D Overlay (Compare→Structures) | `buildOverlayViewer`, `_addOverlayModel`, `refreshOverlay`, `overlayPair` |
 | Canvas-Plots | `drawSpectrum`, `drawDelta`, `drawCross`, `drawPR`, `drawCompare`, `drawOptChart`, `drawScanProfile`, `drawOrbitalDiagram`, `drawEnergyChart`, `drawCmpContext` |
@@ -152,6 +153,40 @@ muss neu gestylt werden (`applyTheme` setzt alle `_sig`-Caches zurück und ruft
 **unabhängig vom Thema** — ein Bild ohne Hintergrund landet fast immer auf weißem Papier,
 und dunkle Bühnenfarben wären dort unsichtbar. Der PNG-Export geht über den Offscreen-
 Viewer in der eingestellten Exportgröße, nicht über die Bildschirmfläche.
+
+### Auslenkungsvektoren und Phasenmarken
+
+Beides zeichnet in **eine** Richtung: eine gedruckte Abbildung kann nicht animiert sein,
+muss aber dasselbe zeigen wie die Animation.
+
+* **Pfeile.** Vorher: `amp · 3.2 · d`, beginnend im Atommittelpunkt. Bei einer
+  C-O-Streckschwingung ist das ein ~0.1 Å langer Pfeil in einer ~0.4 Å großen Kugel —
+  im Szenengraph vorhanden, auf dem Bildschirm unsichtbar. Jetzt wird die Länge auf die
+  **größte Auslenkung der Mode** normiert (`ARROW_MAX = 1.45 Å`, der Amplitudenregler
+  skaliert weiter), und der Pfeil startet auf der Kugeloberfläche
+  (`_arrowStartOffset ≈ 0.6·r_cov`). Unter `ARROW_MIN_REL = 0.12` der Maximalauslenkung
+  kein Pfeil — das wären sonst nur Wasserstoffe im Rauschen. Farbe ist bewusst **nicht**
+  der Akzent: der ist auf heller Bühne ein dunkles Orange und Fe ist `#E06633`.
+  Die Pfeile hängen nicht mehr an `playing`; im Standbild sind sie das Einzige, was
+  die Bewegung noch zeigt.
+* **Phasenmarken** (`view3d.phase`). Je Bindung eine Hülse, eingefärbt nach dem
+  Vorzeichen der Streckkoordinate `q = ê·(d_i − d_j)` aus `GaussianAnalyzer.bondPhases`
+  — warm = Bindung verlängert sich bei t = 0, kalt = sie verkürzt sich, Dicke nach |q|.
+  Das ±-Zeichen an der Bindungsmitte trägt dieselbe Information in Graustufen.
+  ⚠️ **Zwei Normierungen, und die Verwechslung ist der Fehler.** `rel` ist auf die
+  stärkste Bindung *dieser Mode* normiert und erreicht immer 1 — gut für die Dicke,
+  unbrauchbar als Filter: eine reine Biegeschwingung bekäme damit ein voll
+  ausgeschlagenes Vorzeichenmuster ohne Bedeutung (gemessen: 13 markierte Bindungen bei
+  einer 30-cm⁻¹-Gerüstmode). `amp = |q| / max|d|` ist absolut: echte Streckschwingungen
+  landen bei ≈1.7, Biegeschwingungen bei ≈0.1. Gefiltert wird deshalb über
+  `PHASE_MIN_AMP = 0.35`.
+  ⚠️ Das globale Vorzeichen einer Normalmode ist willkürlich (Gaussian druckt eine der
+  beiden Richtungen). `bondPhases` legt es fest: die Bindung mit dem größten |q| ist
+  positiv. Ohne diese Konvention wären zwei Abbildungen derselben Mode spiegelbar und
+  nicht vergleichbar; die Legende nennt die Ankerbindung deshalb im Bild.
+* Beides geht durch `_renderPhase` auch in den Export. 3Dmol bemisst Labels in
+  **Bildschirmpixeln**, deshalb bekommt der Exportpfad `cfg.scale = outW / baseW` —
+  sonst schrumpfen ±-Zeichen und Atomlabels bei 1920 px gegenüber dem Molekül.
 
 ### Persistenz
 
@@ -419,6 +454,7 @@ Serien-Merge in der UI).
 | Funktion | Ein | Aus |
 |---|---|---|
 | `compositionVector(mode, opts)` | Mode | `{typkey: anteil}` (0–1); D wird auf H normalisiert, außer `opts.normalizeIsotopes === false` |
+| `bondPhases(analysis, dispMode)` | `{coords, bonds}` + `mode.disp` | `{list:[{i, j, q, r, rel, amp}], max, dmax, ref, flipped}`. `q = ê_ij·(d_i − d_j)` = die Streckkoordinate, **vorzeichenbehaftet**: q > 0 heißt „Bindung verlängert sich bei t = 0". Genau dieses Vorzeichenmuster *ist* Gleich-/Gegenphasigkeit. `rel` = auf die stärkste Bindung der Mode normiert (Dicke), `amp` = auf die größte Atomauslenkung normiert (Filter, s. o.). Konvention: stärkste Bindung positiv |
 | `modeSimilarity(ma, mb, opts)` | zwei Modes | Score in [0,1]: `wComp·cos + wFreq·gauss(Δν) + wSpec·δ_label`, Defaults `0.62 / 0.23 / 0.15`, `freqSigma = 130` |
 | `matchMode(mode, candidates, opts)` | | `{mode, score, index}` oder `null` unter `minScore` (Default 0.35) |
 | `matchModes(modesA, modesB, opts)` | | `[{a, b\|null, score}]` in A-Reihenfolge; greedy nach Score, `oneToOne` Default `true` |
